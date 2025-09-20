@@ -2,7 +2,15 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <!-- PWA: manifest + iOS/Android meta for standalone fullscreen from home screen -->
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="グルコースマンの落ちゲー" />
+    <link rel="apple-touch-icon" href="assets/IMG_7890.png" sizes="180x180" />
     <title>グルコースマンの落ちゲー</title>
     <style>
       html, body {
@@ -12,11 +20,19 @@
         color: #0f1a2a;
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans JP, Helvetica, Arial, sans-serif;
         user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-user-drag: none;
         -webkit-tap-highlight-color: transparent;
+        overflow: hidden; /* ページスクロール無効化 */
+        overscroll-behavior: contain; /* プルリフレッシュ抑止 */
       }
       #wrap { position: relative; height: 100%; }
       canvas { display: block; width: 100%; height: 100%; }
       canvas { touch-action: none; }
+      /* タップUI最適化 */
+      a, button, .btn, .btnc { touch-action: manipulation; }
+      img { -webkit-user-drag: none; }
       .hud {
         position: absolute; left: 8px; top: 8px;
         background: transparent;
@@ -30,7 +46,8 @@
       }
       .center {
         position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-        pointer-events: none;
+        /* Chromeで開始ボタンが効かない対策：パネルを操作可能に */
+        pointer-events: auto;
       }
       .panel {
         pointer-events: auto;
@@ -39,6 +56,7 @@
         border-radius: 12px; padding: 18px 22px; text-align: center;
         max-width: 520px; box-shadow: 0 12px 40px rgba(0,0,0,0.35);
         color: #e7f0ff;
+        z-index: 10000; /* 常に前面 */
       }
       .title { font-size: 40px; font-weight: 800; margin-bottom: 10px; }
       .subtitle { font-size: 32px; opacity: 0.95; margin-bottom: 18px; }
@@ -56,7 +74,7 @@
       .pad.left { left: 12px; }
       .pad.right { right: 12px; }
       .pad .btnc {
-        width: 64px; height: 64px; border-radius: 50%;
+        width: 64px; height: 64px; min-width: 48px; min-height: 48px; border-radius: 50%;
         background: rgba(81,97,255,0.22);
         border: 1px solid rgba(255,255,255,0.15);
         box-shadow: 0 6px 18px rgba(0,0,0,0.35);
@@ -65,7 +83,11 @@
         user-select: none; -webkit-user-select: none;
         backdrop-filter: blur(2px);
       }
-      .pad .btnc:active { transform: translateY(1px); }
+      .pad .btnc:active { transform: translateY(1px); filter: brightness(1.15); }
+      /* リスタートボタンは最前面・タップ可能 */
+      #restartBtn { position: relative; z-index: 9999; pointer-events: auto; touch-action: manipulation; }
+      /* 右上フェーズ名バッジは非表示 */
+      .phase-badge { display: none !important; }
       @media (min-width: 480px) {
         .pad .btnc { width: 82px; height: 82px; font-size: 44px; }
       }
@@ -106,24 +128,44 @@
 
     <script>
       (() => {
+        // iOSピンチ・ズーム/ジェスチャメニュー抑止
+        window.addEventListener('gesturestart', (e) => e.preventDefault());
+        window.addEventListener('gesturechange', (e) => e.preventDefault());
+        window.addEventListener('gestureend', (e) => e.preventDefault());
+        // ゲーム領域のタッチ既定動作を抑止（スクロール/ズーム防止）
+        const wrapEl = document.getElementById('wrap');
+        const gameEl = document.getElementById('game');
+        const touchEl = document.getElementById('touch');
+        const stop = (ev) => {
+          // UIパネル(#panel)内の操作は除外して既定動作を許可
+          try { if (ev.target && ev.target.closest && ev.target.closest('#panel')) return; } catch(_){}
+          try { ev.preventDefault(); } catch(_){}
+        };
+        ['touchstart','touchmove','touchend','touchcancel'].forEach(t => {
+          if (wrapEl) wrapEl.addEventListener(t, stop, { passive: false });
+          if (gameEl) gameEl.addEventListener(t, stop, { passive: false });
+          if (touchEl) touchEl.addEventListener(t, stop, { passive: false });
+        });
         const canvas = document.getElementById('game');
         const ctx = canvas.getContext('2d');
         const hud = document.getElementById('hud');
         const overlay = document.getElementById('overlay');
         const startBtn = document.getElementById('startBtn');
-        // DEVオプション（?dev=1&phase=1|2|3|4）
+        // DEVオプション（?dev[=任意] & phase=1|2|3|4）
         const DEV = (() => {
           try {
-            const sp = new URLSearchParams(location.search);
-            const dev = sp.get('dev') === '1';
+            const sp = new URL(location.href).searchParams;
+            const enabled = sp.has('dev');
             let phase = sp.get('phase');
             if (phase === '4') phase = 'final';
             if (phase !== '1' && phase !== '2' && phase !== '3' && phase !== 'final') phase = null;
             if (phase === '1') phase = 'phase1';
             if (phase === '2') phase = 'phase2';
             if (phase === '3') phase = 'phase3';
-            return { dev, phase };
-          } catch (_) { return { dev: false, phase: null }; }
+            const obj = { enabled, dev: enabled, phase };
+            console.log('[DEV]', { devParam: sp.get('dev'), DEV: obj });
+            return obj;
+          } catch (_) { return { enabled: false, dev: false, phase: null }; }
         })();
 
         const state = {
@@ -444,6 +486,55 @@
           return 'phase1';
         }
 
+        // DEV: フェーズジャンプ（G/H/J/K）。本編には影響しない開発用。
+        function jumpToPhase(n) {
+          try {
+            const idx = Math.max(1, Math.min(4, n)) - 1;
+            const names = ['phase1', 'phase2', 'phase3', 'final'];
+            const name = names[idx];
+            if (bgmEl) {
+              // BGMの再生位置を該当フェーズ開始へ移動
+              bgmEl.currentTime = (PHASES[idx] && PHASES[idx].start) ? PHASES[idx].start + 0.2 : 0;
+              tryPlayBgm();
+            }
+            // ゲーム未開始時でも見た目の設定は合わせておく
+            if (!state.running) {
+              currentPhase = name;
+              applyDifficulty(DIFFICULTY[name] || DIFFICULTY.phase1);
+              if (typeof applyPhasePlayerTuning === 'function') applyPhasePlayerTuning(name);
+              phaseTimer = 0;
+              phaseLenSec = phaseDurationFor(name);
+            }
+            console.log('[DEV] Jump phase ->', name);
+          } catch (_) { /* noop */ }
+        }
+        // フェーズ別にプレイヤーのサイズ（見た目＋当たり判定）とジャンプ力を調整
+        function applyPhasePlayerTuning(phaseName) {
+          // サイズ: phase1=100%, phase2=80%, phase3=60%, final=50%
+          let scale = 1.0;
+          if (phaseName === 'phase2') scale = 0.8;
+          else if (phaseName === 'phase3') scale = 0.6;
+          else if (phaseName === 'final') scale = 0.5;
+          // 足元と中心が変わらないように補正してサイズ反映
+          const oldW = player.w, oldH = player.h;
+          const footY = player.y + oldH;
+          const cx = player.x + oldW / 2;
+          player.scale = scale;
+          player.w = Math.round((player.baseW || player.w) * scale);
+          player.h = Math.round((player.baseH || player.h) * scale);
+          player.y = footY - player.h;
+          player.x = Math.round(cx - player.w / 2);
+
+          // ジャンプ力: 小さいほど弱め（例: -15, -13, -11, -9に相当する割合）
+          // 基準を既存の初期値 520 とし、例の比率に近い係数で段階的に弱める
+          const base = 520;
+          let mult = 1.0;             // phase1 ≈ -15
+          if (phaseName === 'phase2') mult = 0.87;  // ≈ -13
+          else if (phaseName === 'phase3') mult = 0.73; // ≈ -11
+          else if (phaseName === 'final') mult = 0.60;  // ≈ -9
+          world.jumpSpeed = Math.max(120, Math.round(base * mult));
+        }
+
         function applyDifficulty(params) {
           world.scrollSpeedMult = params.scrollSpeedMult;
           world.platformSpeedGain = params.platformSpeedGain;
@@ -631,7 +722,8 @@
         let bedSpriteReady = false;
         bedSprite.onload = () => { bedSpriteReady = true; console.log('ベッド画像読み込み成功'); };
         bedSprite.onerror = () => { bedSpriteReady = false; console.log('ベッド画像読み込み失敗'); };
-        bedSprite.src = 'sprites_bed.png';
+        // 404回避：実ファイル配置に合わせて正しいパスへ
+        bedSprite.src = 'scripts/sprites_bed.png';
         
         function tryPlayBgm() {
           if (!bgmEnabled || !bgmEl) return;
@@ -715,19 +807,11 @@
           opacity: 0; transition: opacity 0.4s ease, color 0.8s ease;
         `;
         phaseBadge.textContent = '';
+        phaseBadge.className = 'phase-badge';
         document.getElementById('wrap').appendChild(phaseBadge);
         let phaseBadgeHideTimer = null;
-        function showPhaseBadge(text) {
-          if (!phaseBadge) return;
-          // 既存の非表示スケジュールは無効化（常時表示仕様）
-          if (phaseBadgeHideTimer) { try { clearTimeout(phaseBadgeHideTimer); } catch(_){} phaseBadgeHideTimer = null; }
-          // 前の表示を消してからフェードイン
-          phaseBadge.style.opacity = '0';
-          setTimeout(() => {
-            phaseBadge.textContent = text || '';
-            phaseBadge.style.opacity = '1';
-          }, 30);
-        }
+        // 右上フェーズ名は非表示化するため更新処理は空にする
+        function showPhaseBadge(_text) { /* no-op: hidden */ }
 
         // BGM時間監視とフェーズ制御
         function updatePhase() {
@@ -745,6 +829,7 @@
             const prev = currentPhase;
             currentPhase = phase;
             applyDifficulty(DIFFICULTY[phase]);
+            applyPhasePlayerTuning(currentPhase);
             
             // 背景テキスト/囁きを一度リセットしてから、フェーズに応じて再初期化
             BG.tickerText = '';
@@ -922,7 +1007,10 @@
         };
 
         const player = {
-          x: 0, y: 0, w: 84, h: 132, // キャラサイズを2倍に拡大
+          x: 0, y: 0,
+          baseW: 84, baseH: 132,
+          w: 84, h: 132,
+          scale: 1.0,
           vx: 0, vy: 0,
           speed: 280, // horizontal
           onGround: false,
@@ -935,6 +1023,10 @@
         let platformIdCounter = 1;
         let sugarIdCounter = 1;
         let popups = [];
+        // 足場生成タイマー（同時数と生成間隔の制御）
+        let pfSpawnTimer = 0;
+        let pfNextDelay = 1.8;
+        let lastSpawnEdge = false; // 直前スポーンがエッジ帯だったか
 
         // フェーズ別スコア
         function scoreForCurrentPhase() {
@@ -1016,6 +1108,7 @@
           // フェーズシステム初期化
           currentPhase = 'phase1';
           applyDifficulty(DIFFICULTY.phase1);
+          applyPhasePlayerTuning(currentPhase);
           phaseTransition.active = false;
           // フェーズ表示（フェーズ中も常時表示、フェードインのみ）
           if (phaseBadge) {
@@ -1023,31 +1116,90 @@
             showPhaseBadge('現世のうつしよ ― 光の回廊');
           }
 
-          // 画面下方向に足場を十分に用意
+          // 画面下方向に最小限の足場のみ用意（最大数を抑える）
+          const cfg0 = spawnConfigForPhase(currentPhase);
           const gapMin = Math.floor(world.platformGapMin * world.platformGapScale);
           const gapMax = Math.floor(world.platformGapMax * world.platformGapScale);
           let y = startY + rand(gapMin, gapMax);
-          while (y < canvas.clientHeight + 800) {
+          const initialCount = Math.min(2, Math.max(0, (cfg0.limit - 1)));
+          for (let i = 0; i < initialCount; i++) {
             platforms.push(makePlatform(y));
             y += rand(gapMin, gapMax);
           }
+          pfSpawnTimer = 0;
+          pfNextDelay = randf(cfg0.min, cfg0.max);
         }
 
         function makePlatform(y) {
-          // 基準幅からフェーズに応じて 40〜60%（phase1）/ 30〜50%（phase2,3,final）に縮小
+          // 基準幅からフェーズに応じて縮小（基本: 40〜60%、後半: 30〜50%）
           const baseW = rand(world.platformMinW, world.platformMaxW);
           const useNarrower = (currentPhase === 'phase2' || currentPhase === 'phase3' || currentPhase === 'final');
           const sMin = useNarrower ? 0.30 : 0.40;
           const sMax = useNarrower ? 0.50 : 0.60;
-          const s = sMin + Math.random() * (sMax - sMin);
+          // フェーズ段階ごとの追加短縮（phase2:0.95, phase3:0.90, final:0.80）
+          const phaseWMult = (currentPhase === 'final') ? 0.80 : (currentPhase === 'phase3' ? 0.90 : (currentPhase === 'phase2' ? 0.95 : 1.00));
+          const s = (sMin + Math.random() * (sMax - sMin)) * phaseWMult;
           const w = Math.max(24, Math.floor(baseW * s));
-          const x = Math.floor(Math.random() * Math.max(1, canvas.clientWidth - w));
+
+          // X位置は一様乱数で決定。端の連続出現を抑制（前回がエッジ帯の場合は再抽選）。
+          const W = canvas.clientWidth || 320;
+          const pad = 28; // 24〜32pxの安全マージン
+          const minX = pad;
+          const maxX = Math.max(pad, W - pad - w);
+          const edgeFrac = 0.11; // 10〜12%のエッジ帯
+          const isEdgeX = (xx) => {
+            const cx = xx + w / 2;
+            const leftEnd = W * edgeFrac;
+            const rightStart = W * (1 - edgeFrac);
+            return (cx < leftEnd) || (cx > rightStart);
+          };
+          let x = minX + Math.floor(Math.random() * Math.max(1, (maxX - minX)));
+          if (lastSpawnEdge && isEdgeX(x)) {
+            for (let i = 0; i < 8 && isEdgeX(x); i++) {
+              x = minX + Math.floor(Math.random() * Math.max(1, (maxX - minX)));
+            }
+          }
+          lastSpawnEdge = isEdgeX(x);
+
           const pf = { id: platformIdCounter++, x, y, w, h: world.platformH, hue: Math.random() * 360, stayT: 0, fading: false, fadeT: 0 };
           maybeAddSugar(pf);
           return pf;
         }
 
         function rand(a, b) { return Math.floor(a + Math.random() * (b - a)); }
+        function randf(a, b) { return a + Math.random() * (b - a); }
+        // 検証用: X生成ヒストグラム（左右25%/中央50%）
+        window.gmDebug = window.gmDebug || {};
+        window.gmDebug.runSpawnHistogram = function(times = 1000) {
+          const W = canvas.clientWidth || 320;
+          const pad = 28; const w = 80;
+          const minX = pad; const maxX = Math.max(pad, W - pad - w);
+          const L = 0.25 * W, R = 0.75 * W;
+          const edgeFrac = 0.11;
+          const isEdge = (xx)=>{ const cx=xx+w/2; return (cx < W*edgeFrac)||(cx > W*(1-edgeFrac)); };
+          let left=0, center=0, right=0, prevEdge=false;
+          for (let i=0;i<times;i++){
+            let x = minX + Math.floor(Math.random() * Math.max(1, (maxX - minX)));
+            if (prevEdge && isEdge(x)) {
+              for (let t=0;t<8 && isEdge(x);t++) x = minX + Math.floor(Math.random() * Math.max(1, (maxX - minX)));
+            }
+            prevEdge = isEdge(x);
+            const cx = x + w/2;
+            if (cx < L) left++; else if (cx > R) right++; else center++;
+          }
+          console.log('Spawn histogram (L/C/R):', left, center, right, 'ratio ~', (left/ times).toFixed(2), (center/ times).toFixed(2), (right/ times).toFixed(2));
+        };
+
+        // フェーズごとの足場同時数と生成間隔
+        function spawnConfigForPhase(phase) {
+          switch (phase) {
+            case 'phase2': return { limit: 3, min: 1.8, max: 2.6 }; // 指定(>=1.3)より広げて難化
+            case 'phase3': return { limit: 3, min: 2.0, max: 2.8 };
+            case 'final':  return { limit: 2, min: 2.2, max: 3.2 };
+            case 'phase1':
+            default:       return { limit: 4, min: 1.6, max: 2.2 }; // 指定: >=1.6
+          }
+        }
 
         function maybeAddSugar(pf) {
           if (pf && pf.safe) return; // セーフ足場には置かない
@@ -1064,6 +1216,93 @@
 
         function currentMultiplier() {
           return state.fever ? 6 : Math.max(1, state.comboMult);
+        }
+
+        // セーブ/ロード
+        function serializeSave() {
+          const data = {
+            ver: 1,
+            active: true,
+            t: Date.now(),
+            currentPhase,
+            state: {
+              running: state.running,
+              paused: state.paused,
+              gameOver: state.gameOver,
+              score: state.score,
+              time: state.time,
+              best: state.best,
+              lastScorePid: state.lastScorePid,
+              scoredPids: Array.from(state.scoredPids||[]),
+            },
+            player: {
+              x: player.x, y: player.y, vx: player.vx, vy: player.vy,
+              w: player.w, h: player.h, onGround: player.onGround, groundId: player.groundId,
+              airJumpsLeft: player.airJumpsLeft,
+            },
+            world: {
+              scrollSpeed: world.scrollSpeed,
+              gravity: world.gravity,
+              jumpSpeed: world.jumpSpeed,
+              platformGapMin: world.platformGapMin,
+              platformGapMax: world.platformGapMax,
+              platformGapScale: world.platformGapScale,
+            },
+            counters: { platformIdCounter, sugarIdCounter },
+            timers: { pfSpawnTimer: (typeof pfSpawnTimer==='number'?pfSpawnTimer:0), pfNextDelay: (typeof pfNextDelay==='number'?pfNextDelay:1.8), phaseTimer, phaseLenSec },
+            arrays: {
+              platforms: platforms.map(p => ({ id:p.id,x:p.x,y:p.y,w:p.w,h:p.h,hue:p.hue||0,safe:!!p.safe,stayT:p.stayT||0,fading:!!p.fading,fadeT:p.fadeT||0 })),
+              sugars: sugars.map(s => ({ id:s.id,x:s.x,y:s.y,r:s.r,alive:s.alive }))
+            }
+          };
+          return data;
+        }
+
+        function tryRestore() {
+          try {
+            const raw = localStorage.getItem('glucoseman_autosave');
+            if (!raw) return false;
+            const data = JSON.parse(raw);
+            if (!data || !data.active || data.ver !== 1) return false;
+            // 復元確認UIを表示（自動開始はしない）
+            overlay.style.display = 'flex';
+            const panel = document.getElementById('panel');
+            panel.innerHTML = `
+              <div class="title">続きから再開しますか？</div>
+              <div class="small" style="margin-bottom:8px">前回スコア: ${data.state && data.state.score || 0}</div>
+              <div class="btn" id="resumeFromSaveBtn">続きから</div>
+              <div class="btn" id="startBtn" style="margin-left:8px">最初から</div>
+            `;
+            const doApply = () => {
+              audio.resume();
+              BGM.onStartPlay();
+              currentPhase = data.currentPhase || 'phase1';
+              applyDifficulty(DIFFICULTY[currentPhase]||DIFFICULTY.phase1);
+              applyPhasePlayerTuning(currentPhase);
+              state.running = true; state.paused = false; state.gameOver = false;
+              state.score = (data.state&&data.state.score)||0;
+              state.time = (data.state&&data.state.time)||0;
+              state.best = Number(localStorage.getItem('glucoseman_best')||state.best||0);
+              state.lastScorePid = (data.state&&data.state.lastScorePid)||null;
+              state.scoredPids = new Set((data.state&&data.state.scoredPids)||[]);
+  
+              player.x = data.player.x; player.y = data.player.y; player.vx = data.player.vx; player.vy = data.player.vy;
+              player.onGround = !!data.player.onGround; player.groundId = data.player.groundId; player.airJumpsLeft = data.player.airJumpsLeft||0;
+  
+              world.scrollSpeed = data.world.scrollSpeed; world.gravity = data.world.gravity; world.jumpSpeed = data.world.jumpSpeed;
+              world.platformGapMin = data.world.platformGapMin; world.platformGapMax = data.world.platformGapMax; world.platformGapScale = data.world.platformGapScale;
+  
+              platformIdCounter = data.counters.platformIdCounter; sugarIdCounter = data.counters.sugarIdCounter;
+              pfSpawnTimer = (data.timers&&data.timers.pfSpawnTimer)||0; pfNextDelay = (data.timers&&data.timers.pfNextDelay)||1.8; phaseTimer = data.timers.phaseTimer||0; phaseLenSec = data.timers.phaseLenSec||phaseDurationFor(currentPhase);
+  
+              platforms = (data.arrays&&data.arrays.platforms)||[];
+              sugars = (data.arrays&&data.arrays.sugars)||[];
+              overlay.style.display = 'none';
+            };
+            const resumeBtn = document.getElementById('resumeFromSaveBtn');
+            if (resumeBtn) resumeBtn.addEventListener('pointerdown', (ev) => { try { ev.preventDefault(); } catch(_){} doApply(); }, { passive: false });
+            return true;
+          } catch(_) { return false; }
         }
 
         function startFever() {
@@ -1084,6 +1323,16 @@
         const control = { coyote: 0, jumpBuf: 0 };
         window.addEventListener('keydown', (e) => {
           if (e.repeat) return;
+          // DEV: フェーズジャンプ（G/H/J/K）。大文字小文字どちらでも可。
+          try {
+            const k = (e.key || '').toLowerCase();
+            if (DEV && DEV.dev) {
+              if (k === 'g') jumpToPhase(1);
+              else if (k === 'h') jumpToPhase(2);
+              else if (k === 'j') jumpToPhase(3);
+              else if (k === 'k') jumpToPhase(4);
+            }
+          } catch(_){}
           if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.add('left');
           if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.add('right');
           if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
@@ -1106,6 +1355,15 @@
           if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.delete('left');
           if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.delete('right');
           if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') keys.delete('jump');
+        });
+        
+        // 戻るジェスチャ対策：履歴を消費してポーズ
+        try { history.replaceState({ gm: 'root' }, '', location.href); } catch(_){}
+        window.addEventListener('popstate', (ev) => {
+          if (state.running && !state.gameOver) {
+            try { history.pushState({ gm: 'play' }, '', location.href); } catch(_){}
+            pauseGame();
+          }
         });
 
         // タッチボタン（マルチタッチ対応）
@@ -1135,13 +1393,36 @@
         bindHold(document.getElementById('btnJumpR'), 'jump', true);
 
         startBtn.addEventListener('click', start);
+        // スマホ/Chrome対策：pointerdownを最優先（preventDefault→Audio→BGM→start）、clickは補助
+        const canStartNow = () => (!state.running && !state.gameOver);
+        document.addEventListener('pointerdown', (ev) => {
+          if (!canStartNow()) return;
+          try { if (ev.target && ev.target.closest && ev.target.closest('#panel')) return; } catch(_){}
+          try { ev.preventDefault(); } catch(_){}
+          try { audio.resume(); } catch(_){}
+          try { tryPlayBgm(); } catch(_){}
+          start();
+        }, { passive: false, once: true });
+        const startBtnEl = document.getElementById('startBtn');
+        if (startBtnEl) {
+          startBtnEl.addEventListener('pointerdown', (ev) => {
+            if (!canStartNow()) return;
+            try { ev.preventDefault(); } catch(_){}
+            try { audio.resume(); } catch(_){}
+            try { tryPlayBgm(); } catch(_){}
+            start();
+          }, { passive: false });
+        }
         function start() {
+          console.log('[START]', state.running, state.gameOver);
           overlay.style.display = 'none';
           document.getElementById('panel').innerHTML = panelHTML('running');
           audio.resume();
           sfxPlay.start();
           // BGMは曲頭からフェードイン。多重再生防止のため stop→seek0→play の順。
           BGM.onStartPlay();
+          // 戻るジェスチャ対策：ゲーム中はダミー履歴を積む
+          try { history.pushState({ gm: 'play' }, '', location.href); } catch(_){}
           reset();
         }
 
@@ -1153,8 +1434,11 @@
           panel.innerHTML = panelHTML('paused');
           const resumeBtn = document.getElementById('resumeBtn');
           const restartBtn = document.getElementById('restartBtn');
-          if (resumeBtn) resumeBtn.addEventListener('click', resumeGame);
-          if (restartBtn) restartBtn.addEventListener('click', start);
+          if (resumeBtn) resumeBtn.addEventListener('pointerdown', (ev) => { ev.preventDefault(); resumeGame(); }, { passive: false });
+          if (restartBtn) restartBtn.addEventListener('pointerdown', (ev) => {
+            ev.preventDefault();
+            if (!state.running || state.gameOver) start();
+          }, { passive: false });
           sfxPlay.pause();
         }
 
@@ -1219,8 +1503,33 @@
         }
         requestAnimationFrame(tick);
 
+        // 初期復元の試行（存在すれば自動再開）
+        tryRestore();
+
         function update(dt) {
           state.time += dt;
+          // オートセーブ（2.5秒ごと、プレイ中のみ）
+          if (!window.__gmAutosave) window.__gmAutosave = { t: 0 };
+          window.__gmAutosave.t += dt;
+          if (window.__gmAutosave.t >= 2.5 && state.running && !state.paused && !state.gameOver) {
+            window.__gmAutosave.t = 0;
+            try {
+              const save = serializeSave();
+              localStorage.setItem('glucoseman_autosave', JSON.stringify(save));
+            } catch(_){}
+          }
+
+          // 進行中のみ：誤リロード確認（beforeunload）フラグ管理
+          if (state.running && !state.paused && !state.gameOver) {
+            if (!window.__gmUnloadGuard) {
+              window.addEventListener('beforeunload', window.__gmUnloadGuard = (e) => {
+                e.preventDefault(); e.returnValue = '';
+              });
+            }
+          } else if (window.__gmUnloadGuard) {
+            window.removeEventListener('beforeunload', window.__gmUnloadGuard);
+            window.__gmUnloadGuard = null;
+          }
           
           // フェーズ制御の更新
           updatePhase();
@@ -1566,12 +1875,24 @@
               state.safeFading = false;
             }
           }
-          // 画面上に消えたものを削除。ただし現在接地中の足場は保持して勝手に消えないようにする
-          platforms = platforms.filter(p => (p.y + p.h > -40) || (p.id === player.groundId));
+          // 画面上端を超えた足場は即削除（接地中でも削除して落とす）
+          for (const p of platforms.slice()) {
+            if ((p.y + p.h) <= 0) {
+              if (player.groundId === p.id) { player.onGround = false; player.groundId = null; }
+              platforms = platforms.filter(q => q.id !== p.id);
+            }
+          }
           let maxY = platforms.length ? Math.max(...platforms.map(p => p.y)) : -40;
-          while (maxY < H + 600) {
+          // 足場の同時存在数を抑えつつ、時間間隔で生成
+          pfSpawnTimer += dt;
+          const cfg = spawnConfigForPhase(currentPhase);
+          const nonSafeCount = platforms.reduce((n,p)=>n + (p.safe?0:1), 0);
+          if (nonSafeCount < cfg.limit && pfSpawnTimer >= pfNextDelay) {
+            pfSpawnTimer = 0;
+            pfNextDelay = randf(cfg.min, cfg.max);
             const gapMin = Math.floor(world.platformGapMin * world.platformGapScale);
             const gapMax = Math.floor(world.platformGapMax * world.platformGapScale);
+            if (maxY < H + 100) maxY = Math.max(maxY, H + 40);
             maxY += rand(gapMin, gapMax);
             platforms.push(makePlatform(maxY));
           }
@@ -1660,6 +1981,14 @@
         function gameOver() {
           state.running = false;
           state.gameOver = true;
+          // オートセーブ停止（次回起動時に続きからにしない）
+          try {
+            const raw = localStorage.getItem('glucoseman_autosave');
+            if (raw) {
+              const data = JSON.parse(raw);
+              if (data) { data.active = false; localStorage.setItem('glucoseman_autosave', JSON.stringify(data)); }
+            }
+          } catch(_){}
           // BGM制御：デバウンス付きで即停止→曲頭へ
           BGM.onGameOver();
           state.best = Math.max(state.best, state.score);
@@ -1676,7 +2005,10 @@
           const panel = document.getElementById('panel');
           panel.innerHTML = panelHTML('gameover');
           const restartBtn = document.getElementById('restartBtn');
-          if (restartBtn) restartBtn.addEventListener('click', start);
+          if (restartBtn) restartBtn.addEventListener('pointerdown', (ev) => {
+            ev.preventDefault();
+            if (!state.running || state.gameOver) start();
+          }, { passive: false });
           sfxPlay.over();
         }
 
@@ -2301,7 +2633,9 @@
         } catch (_) {}
       })();
     </script>
-    <script src="phase-control.js"></script>
+    <!-- Optional external phase controller: disabled to avoid 404
+    <script src="scripts/phase-control.js"></script>
+    -->
     <script src="dev-tools.js"></script>
   </body>
 </html>
