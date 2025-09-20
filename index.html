@@ -1,0 +1,2307 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>グルコースマンの落ちゲー</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: linear-gradient(#bfe1ff, #ffffff);
+        color: #0f1a2a;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans JP, Helvetica, Arial, sans-serif;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #wrap { position: relative; height: 100%; }
+      canvas { display: block; width: 100%; height: 100%; }
+      canvas { touch-action: none; }
+      .hud {
+        position: absolute; left: 8px; top: 8px;
+        background: transparent;
+        padding: 2px 4px; border-radius: 4px; font-weight: 600;
+        box-shadow: none;
+        color: #ffffff;
+        transition: color 0.8s ease;
+        opacity: 0.6;
+        font-size: 10px;
+        line-height: 1.2;
+      }
+      .center {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        pointer-events: none;
+      }
+      .panel {
+        pointer-events: auto;
+        background: rgba(20,24,40,0.9);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 12px; padding: 18px 22px; text-align: center;
+        max-width: 520px; box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+        color: #e7f0ff;
+      }
+      .title { font-size: 40px; font-weight: 800; margin-bottom: 10px; }
+      .subtitle { font-size: 32px; opacity: 0.95; margin-bottom: 18px; }
+      .key { display: inline-block; padding: 8px 20px; border-radius: 8px; background: #222846; margin: 0 4px; border: 1px solid rgba(255,255,255,0.1); font-size: 28px; }
+      .btn { display: inline-block; margin-top: 16px; padding: 16px 24px; border-radius: 10px; background: #5161ff; color: white; font-weight: 700; cursor: pointer; font-size: 32px; }
+      .btn:active { transform: translateY(1px); }
+      .small { font-size: 28px; opacity: 0.9; }
+      /* HUDは左上に小さく半透明で表示 */
+      .hud { font-size: 10px; }
+      a { color: #a8b4ff; text-decoration: none; }
+
+      /* モバイル操作ボタン */
+      .touch { position: absolute; inset: 0; pointer-events: none; }
+      .pad { position: absolute; bottom: calc(10px + env(safe-area-inset-bottom)); pointer-events: auto; display: flex; gap: 14px; align-items: center; }
+      .pad.left { left: 12px; }
+      .pad.right { right: 12px; }
+      .pad .btnc {
+        width: 64px; height: 64px; border-radius: 50%;
+        background: rgba(81,97,255,0.22);
+        border: 1px solid rgba(255,255,255,0.15);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+        color: #e7f0ff; font-weight: 800; font-size: 36px;
+        display: flex; align-items: center; justify-content: center;
+        user-select: none; -webkit-user-select: none;
+        backdrop-filter: blur(2px);
+      }
+      .pad .btnc:active { transform: translateY(1px); }
+      @media (min-width: 480px) {
+        .pad .btnc { width: 82px; height: 82px; font-size: 44px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas id="game"></canvas>
+      <div class="hud" id="hud">フェーズ: 現世のうつしよ ― 光の回廊 ／ スコア: 0</div>
+      <!-- 音量トグルは内部機能として保持（画面には表示しない） -->
+      <div class="hud" id="sfxBtn" style="display:none;">SFX: ON</div>
+      <div class="hud" id="bgmBtn" style="display:none;">BGM: ON</div>
+      <audio id="bgm" src="assets/ン.mp3" preload="none" loop></audio>
+      
+      <!-- タッチ操作エリア（スマホ） -->
+      <div class="touch" id="touch">
+        <div class="pad left">
+          <div class="btnc" id="btnLeft">←</div>
+          <div class="btnc" id="btnJumpL">⤴︎</div>
+        </div>
+        <div class="pad right">
+          <div class="btnc" id="btnJumpR">⤴︎</div>
+          <div class="btnc" id="btnRight">→</div>
+        </div>
+      </div>
+      <div class="center" id="overlay">
+        <div class="panel" id="panel">
+          <div class="title">グルコースマンの落ちゲー</div>
+          <div class="subtitle">下から上へせり上がる足場を乗り継ぎながら、できるだけ下へ降り続けよう！</div>
+          <div>操作: <span class="key">←</span> <span class="key">→</span> または <span class="key">A</span> <span class="key">D</span> ／ ジャンプ: <span class="key">↑</span> <span class="key">W</span> <span class="key">Space</span></div>
+          <div class="small">スマホ: 画面下の ← ⤴︎ → ボタン</div>
+          <div class="small">落ち続けて距離を稼ぎ、足場を踏み外して画面下に落ちるとゲームオーバー</div>
+          <div class="small" id="bestLine" style="margin-top:8px"></div>
+          <div class="btn" id="startBtn">ゲーム開始 (Enter/Space)</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (() => {
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const hud = document.getElementById('hud');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('startBtn');
+        // DEVオプション（?dev=1&phase=1|2|3|4）
+        const DEV = (() => {
+          try {
+            const sp = new URLSearchParams(location.search);
+            const dev = sp.get('dev') === '1';
+            let phase = sp.get('phase');
+            if (phase === '4') phase = 'final';
+            if (phase !== '1' && phase !== '2' && phase !== '3' && phase !== 'final') phase = null;
+            if (phase === '1') phase = 'phase1';
+            if (phase === '2') phase = 'phase2';
+            if (phase === '3') phase = 'phase3';
+            return { dev, phase };
+          } catch (_) { return { dev: false, phase: null }; }
+        })();
+
+        const state = {
+          running: false,
+          gameOver: false,
+          paused: false,
+          score: 0, // platforms landed
+          depth: 0, // meters (continuous)
+          best: Number(localStorage.getItem('glucoseman_best') || 0),
+          time: 0,
+          sugars: 0,
+          comboCount: 0,
+          comboMult: 1,
+          comboTime: 0,
+          comboWindow: 2.2,
+          fever: false,
+          feverTime: 0,
+          feverNeed: 5,
+          pickStreak: 0,
+          // セーフ足場関連
+          safePlatformId: null,
+          leftSafe: false,
+          safeFadeT: 0,
+          safeFading: false,
+          // アクティブ化とスコア制御
+          activated: false,
+          lastScorePid: null,
+          // 直前に立っていた足場（連続立ち用リセット）
+          lastGroundId: null,
+          // 観賞モードしきい値（無効化）
+          passiveEndDepth: 999999,
+          safeFadeDuration: 1.2,
+          safeGlow: null,
+          // 一度スコア加算した足場IDの集合（再着地での多重加点防止）
+          scoredPids: new Set(),
+        };
+
+        // デザイン係数（参考画像に合わせやすく）
+        const design = {
+          headRatio: 0.38,      // 頭半径 / 体全高（胴体を少し長く）
+          eyeRadiusRatio: 0.30, // 目半径 / 頭半径
+          eyeOffsetXR: 0.34,    // 目の左右オフセット / 頭半径
+          shirtRatio: 0.60,     // 上半身の高さ比（胴体内）
+        };
+
+        // カラーパレット（グルコースマン用）初期値
+        const palette = {
+          head: '#9b59b6',
+          headShade: '#8e44ad',
+          leaf: '#35d07f',
+          leafDark: '#26a767',
+          // 服色（上=明るめ、下=暗め）参考画像から後で上書き
+          shirtGreen: '#32c275',
+          shirtGreenDark: '#23965a',
+          pantsNavy: '#1e2a5a',
+          pantsNavyDark: '#172045',
+          suitYellow: '#ffd94d',
+          eyeWhite: '#ffffff',
+          eyeIris: '#2b2b2b',
+          eyeShine: 'rgba(255,255,255,0.8)'
+        };
+
+        // 参考画像から色抽出（簡易）：上半身=明るめ、下半身=暗め
+        function derivePaletteFromRef() {
+          if (!refReady) return;
+          const can = document.createElement('canvas');
+          const W = 80, H = 80;
+          can.width = W; can.height = H;
+          const c = can.getContext('2d');
+          c.drawImage(refImg, 0, 0, W, H);
+          const img = c.getImageData(0, 0, W, H).data;
+          const bins = new Map();
+          for (let y = 0; y < H; y += 2) {
+            for (let x = 0; x < W; x += 2) {
+              const i = (y * W + x) * 4;
+              const r = img[i], g = img[i+1], b = img[i+2], a = img[i+3];
+              if (a < 128) continue;
+              // 非常に白/黒に寄る色は除外
+              const bright = (r+g+b)/3;
+              if (bright > 245 || bright < 15) continue;
+              // 4bit量子化
+              const rq = r>>4, gq = g>>4, bq = b>>4;
+              const key = (rq<<8)|(gq<<4)|bq;
+              bins.set(key, (bins.get(key)||0)+1);
+            }
+          }
+          const entries = [...bins.entries()].sort((a,b)=>b[1]-a[1]);
+          if (!entries.length) return;
+          // 上=明るめ、下=暗めの代表色を選択
+          function keyToRgb(k){ return [(k>>8)&0xF, (k>>4)&0xF, k&0xF].map(v=>v*17); }
+          function rgbToHex([r,g,b]){ return '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join(''); }
+          function darken([r,g,b], f){ return [Math.max(0,Math.round(r*f)), Math.max(0,Math.round(g*f)), Math.max(0,Math.round(b*f))]; }
+          let brightColor = null, darkColor = null;
+          for (const [k,_cnt] of entries) {
+            const rgb = keyToRgb(k);
+            const br = (rgb[0]+rgb[1]+rgb[2])/3;
+            if (!brightColor && br >= 80) { brightColor = rgb; }
+            if (!darkColor && br <= 120) { darkColor = rgb; }
+            if (brightColor && darkColor) break;
+          }
+          if (brightColor) {
+            palette.shirtGreen = rgbToHex(brightColor);
+            palette.shirtGreenDark = rgbToHex(darken(brightColor, 0.78));
+          }
+          if (darkColor) {
+            palette.pantsNavy = rgbToHex(darkColor);
+            palette.pantsNavyDark = rgbToHex(darken(darkColor, 0.78));
+          }
+        }
+
+        // アニメ用パラメータ
+        const anim = {
+          squash: 1, // 1=通常 <1=縦伸び >1=縦つぶれ
+          tilt: 0,   // 回転（ラジアン）
+          leafPhase: 0,
+          jumpKick: 0,
+          landKick: 0,
+          air: 0,   // 0=地上 1=空中
+          // 2段ジャンプ用スピン
+          spin: 0,
+          spinVel: 0,
+          spinTime: 0,
+        };
+
+        // 背景演出用テキスト（CLIと同趣旨の軽量版）
+        const NEWS_TICKER = [
+          '速報：XJ99%増加','株価###急落','TRND/NEW::不可解','NEWS ERR-404','警戒: ΔΔΔΔΔ','更新//STREAM','流行中::???','情報漏洩?','BREAK!!＞＞0xFF','指標: N/A%*rev','AI推定>>>未確定','臨時: proto-v1.9','市場: ███ 調整','規制案: draft-α','データ: 2025-??-??','緊急: ???/!!!','LIVE: feed失','解析: ghost値','トレンド: #NULL','速報：XXX-2049','注目: alt▲▼','速報: ping…lost','更新: meta//partial','偏差: σ=?','指数: –––','推移: ////','改訂: rev-b','予報: ???→???','注意: noise高','採点: NaN/100'
+        ];
+        
+        const PHASE2_NEWS = [
+          '速報：夢のジャングルにて"揺らぎの鼓動"を観測','現地リポート：森全体が脈動し、鼓動が大地を揺らす','Breaking Dream News：プレイヤーが未知の揺らぎに包まれる','夢世界調査局：第二フェーズ"揺らぎの鼓動"に突入','特報：鼓動の揺らぎが拡大、夢の奥地で異常事態を確認','緊急：揺らぎパターンの解析結果、予想を上回る複雑さ','現地映像：鼓動に合わせて光る植物群を発見','速報：揺らぎの鼓動が生物に与える影響を調査中','Breaking：夢ジャングルの奥深くから謎の音波を検出','特別レポート：揺らぎの鼓動、プレイヤーの心拍と同調か','緊急事態：鼓動の揺らぎが周辺エリアに拡散中','現場取材：揺らぎに包まれた生命体の生態変化を確認','速報：第二フェーズ突入により、夢世界に新たな現象','Breaking Dream Alert：揺らぎの鼓動、未知の周波数を記録'
+        ];
+        
+        // フェーズ3用：夢の中で直接響く断片的な日本語フレーズ
+        const PHASE3_PHRASES = [
+          '夢とはブロックチェーン──改ざんできない記憶の連鎖',
+          '囁きはハッシュされ、問いは承認を待っている',
+          '孤独なノードが、黄昏の森で夢を検証している',
+          '幻影はトランザクションのように流れ込む',
+          '夢の鼓動はブロックに刻まれ、永遠に失われない',
+          '分岐した夢がフォークし、別の現実へと伸びていく',
+          '沈黙の中で、誰かの夢がマイニングされている',
+          '答えは合意形成のように、すべての囁きの中で決まる',
+          'AI生成は夢と似ている',
+          'ここはデジタルワールドなのか？',
+          '夢とは集合意識のブロックチェーンにアクセスしている'
+        ];
+        // フェーズ2専用ニューステロップ文（指定の5文、順番にループ）
+        const PHASE2_TICKER_LINES = [
+          '速報：夢のジャングルにて“揺らぎの鼓動”を観測',
+          '現地リポート：森全体が脈動し、鼓動が大地を揺らす',
+          'Breaking Dream News：プレイヤーが未知の揺らぎに包まれる',
+          '夢世界調査局：第二フェーズ“揺らぎの鼓動”に突入',
+          '特報：鼓動の揺らぎが拡大、夢の奥地で異常事態を確認'
+        ];
+        const POPUP_WORDS = [
+          '速報','緊急','拡散>>>','データ更新','注目','警戒','LIVE','解析中','未確認','推定','流行中!?','影響度***','仮説','誤報?','続報','draft','β版','ghost','noise','mirror','NULL','TBD','fog'
+        ];
+        function shuffle(a){ const arr = a.slice(); for(let i=arr.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]];} return arr; }
+        const BG = {
+          tickerText: '', tickerX: 0, tickerSpeed: 60,
+          popups: [], spawnTimer: 0,
+          // フェーズ3囁きシステム
+          whisperActive: false, whisperText: '', whisperAlpha: 0, whisperTimer: 0, whisperIndex: 0, whisperTexts: [],
+          // フェーズ2ニュース番組風テロップ
+          p2Active: false, p2Messages: [], p2Index: 0, p2X: 0, p2Speed: 90, p2Gap: 40,
+          // フェーズ3ポップアップ（夢の断片）
+          p3Active: false, p3Items: [], p3SpawnTimer: 0,
+        };
+
+        // フェーズ専用リソース管理（特にphase1のDOM/タイマー/リスナを確実に破棄）
+        const PhaseCleanup = {
+          phase1: { timers: new Set(), rafs: new Set(), listeners: [] },
+          addTimer(id) { this.phase1.timers.add(id); return id; },
+          addRaf(id) { this.phase1.rafs.add(id); return id; },
+          addListener(target, type, handler, opts) {
+            this.phase1.listeners.push({ target, type, handler, opts });
+            target.addEventListener(type, handler, opts);
+          },
+          clearPhase1() {
+            // タイマー停止
+            this.phase1.timers.forEach(id => { try { clearTimeout(id); clearInterval(id); } catch(_){} });
+            this.phase1.timers.clear();
+            // rAF停止（phase1専用で登録されたもののみ）
+            this.phase1.rafs.forEach(id => { try { cancelAnimationFrame(id); } catch(_){} });
+            this.phase1.rafs.clear();
+            // リスナ解除
+            for (const l of this.phase1.listeners) {
+              try { l.target.removeEventListener(l.type, l.handler, l.opts); } catch(_){}
+            }
+            this.phase1.listeners.length = 0;
+            // DOMノード除去（phase1専用としてマークされた要素）
+            const nodes = document.querySelectorAll('.phase1-dom, [data-phase="1"]');
+            nodes.forEach(n => { try { n.remove(); } catch(_){} });
+            // CSSクラス除去（phase1-*）
+            try {
+              document.querySelectorAll('*').forEach(el => {
+                if (!el.classList) return;
+                [...el.classList].forEach(c => { if (c.startsWith('phase1-')) el.classList.remove(c); });
+                // CSSアニメーション停止（phase1系に限るため data-phase="1" にも適用）
+                if (el.matches('.phase1-dom, [data-phase="1"]')) {
+                  el.style.animation = 'none';
+                  el.style.transition = 'none';
+                }
+              });
+            } catch(_){}
+            // キャンバス側のフェーズ1描画状態も即時リセット
+            BG.tickerText = '';
+            BG.tickerX = 0;
+          }
+        };
+        function initBG(phase = 'phase1'){
+          // 囁きシステムをリセット
+          BG.whisperActive = false;
+          BG.whisperAlpha = 0;
+          // フェーズ2テロップのリセット
+          BG.p2Active = false;
+          BG.p2Messages = [];
+          BG.p2Index = 0;
+          BG.p2X = 0;
+          
+          if (phase === 'phase3') {
+            // フェーズ3：夢の断片をランダムに浮かべる（日本語のみ）
+            BG.p3Active = true;
+            BG.p3Items = [];
+            BG.p3SpawnTimer = 0.6; // 最初の出現を少し遅らせる
+          } else if (phase === 'phase2') {
+            // フェーズ2：ニュース番組風テロップを有効化（左→右）
+            BG.p2Active = true;
+            BG.p2Messages = PHASE2_TICKER_LINES.slice(); // 固定順でループ
+            BG.p2Index = 0;
+            BG.p2X = -1000000; // 初期は左外から開始（実際の幅は描画で補正）
+          } else {
+            // その他のフェーズ：通常のティッカー
+            let sourceArray = NEWS_TICKER;
+            if (phase === 'phase2') {
+              sourceArray = PHASE2_NEWS;
+            }
+            const items = shuffle(sourceArray).slice(0, 18);
+            BG.tickerText = items.join('  |  ') + '   ';
+            BG.tickerX = 0;
+          }
+          BG.spawnTimer = 0;
+        }
+
+        // 簡易サウンド（WebAudio）
+        // === フェーズ制御システム ===
+        const PHASES = [
+          { name: 'phase1', start: 0 },       // 〜 349.999s
+          { name: 'phase2', start: 350 },     // 5:50〜
+          { name: 'phase3', start: 635 },     // 10:35〜（体感に合わせてさらに3秒前倒し）
+          { name: 'final',  start: 955 }      // 15:55〜
+        ];
+
+        const DIFFICULTY = {
+          phase1: { 
+            scrollSpeedMult: 1.0, 
+            platformSpeedGain: 0.006,
+            platformGapScale: 1.0, 
+            sugarRate: 0.32,
+            bgTint: 'rgba(0,0,0,0.0)',
+            hudColor: '#ffffff'
+          },
+          phase2: { 
+            scrollSpeedMult: 1.2, 
+            platformSpeedGain: 0.008,
+            // 後半フェーズは縦間隔を広げる（約 100〜150 相当）
+            platformGapScale: 1.25, 
+            sugarRate: 0.35,
+            bgTint: 'rgba(0,0,64,0.08)',
+            hudColor: '#b4c3ff'
+          },
+          phase3: { 
+            scrollSpeedMult: 1.4, 
+            platformSpeedGain: 0.010,
+            // 後半フェーズは縦間隔を広げる（約 100〜150 相当）
+            platformGapScale: 1.25, 
+            sugarRate: 0.38,
+            bgTint: 'rgba(64,0,0,0.10)',
+            hudColor: '#ffc3b4'
+          },
+          final: { 
+            scrollSpeedMult: 1.6, 
+            platformSpeedGain: 0.012,
+            // 最終フェーズも広めを維持
+            platformGapScale: 1.25, 
+            sugarRate: 0.42,
+            bgTint: 'rgba(0,0,0,0.15)',
+            hudColor: '#ffb4d4'
+          },
+        };
+
+        let currentPhase = 'phase1';
+        let phaseTransition = { active: false, timer: 0, duration: 2.0 };
+        let screenShake = { active: false, intensity: 0, timer: 0, duration: 0 };
+        // フェーズ3専用：スローモーション制御（0.5x → 1.0x）
+        const timeCtl = { active: false, from: 1.0, target: 1.0, factor: 1.0, t: 0, duration: 0 };
+
+        // フェーズごとの極端な難易度カーブ（スピード係数）
+        const speedCtl = { base: 60, factor: 1.0 };
+        let phaseTimer = 0; // 現フェーズ経過秒
+        let phaseLenSec = 60; // 現フェーズ想定長（秒）
+        let phaseSpeedProfile = { start: 1.0, mid: null, end: 1.5, split: 0.5 }; // フェーズの開始/中盤/終了係数、splitは前半割合
+        function easeInOut(t){ return t*t*(3-2*t); }
+        function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+        function lerp(a,b,t){ return a + (b-a) * t; }
+        function phaseDurationFor(name){
+          const idx = (name === 'final') ? 3 : (name === 'phase3' ? 2 : (name === 'phase2' ? 1 : 0));
+          const start = PHASES[idx].start;
+          const next = (idx+1 < PHASES.length) ? PHASES[idx+1].start : (PHASES[idx].start + 300);
+          return Math.max(1, next - start);
+        }
+
+        function resolvePhase(t) {
+          if (t >= PHASES[3].start) return 'final';
+          if (t >= PHASES[2].start) return 'phase3';
+          if (t >= PHASES[1].start) return 'phase2';
+          return 'phase1';
+        }
+
+        function applyDifficulty(params) {
+          world.scrollSpeedMult = params.scrollSpeedMult;
+          world.platformSpeedGain = params.platformSpeedGain;
+          world.platformGapScale = params.platformGapScale;
+          world.sugarRate = params.sugarRate;
+          world.bgTint = params.bgTint;
+          world.hudColor = params.hudColor;
+        }
+
+        const audio = {
+          enabled: true,
+          ctx: null,
+          ensure() {
+            if (!this.ctx) {
+              const AC = window.AudioContext || window.webkitAudioContext;
+              if (!AC) return null;
+              this.ctx = new AC();
+            }
+            return this.ctx;
+          },
+          resume() {
+            if (!this.enabled) return;
+            const ctx = this.ensure();
+            if (ctx && ctx.state === 'suspended') ctx.resume();
+          },
+          scheduleNoiseBurst(t, dur = 0.12, gain = 0.035) {
+            if (!this.enabled) return;
+            const ctx = this.ensure();
+            if (!ctx) return;
+            // ホワイトノイズの短いバーストで「チャッ」を表現
+            const buffer = ctx.createBuffer(1, Math.max(1, Math.floor(dur * ctx.sampleRate)), ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < data.length; i++) {
+              // 短い減衰を付与
+              const decay = 1 - i / data.length;
+              data[i] = (Math.random() * 2 - 1) * decay;
+            }
+            const src = ctx.createBufferSource();
+            src.buffer = buffer;
+            const g = ctx.createGain();
+            g.gain.setValueAtTime(Math.max(0.0001, gain), t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+            src.connect(g).connect(ctx.destination);
+            src.start(t);
+            src.stop(t + dur);
+          },
+          scheduleBeep(t, freq, dur = 0.08, type = 'sine', gain = 0.04) {
+            if (!this.enabled) return;
+            const ctx = this.ensure();
+            if (!ctx) return;
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, t);
+            g.gain.setValueAtTime(Math.max(0.0001, gain), t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+            osc.connect(g).connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + dur);
+          },
+          scheduleSweep(t, f1, f2, dur = 0.18, type = 'sine', gain = 0.035) {
+            if (!this.enabled) return;
+            const ctx = this.ensure();
+            if (!ctx) return;
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(f1, t);
+            osc.frequency.linearRampToValueAtTime(f2, t + dur);
+            g.gain.setValueAtTime(Math.max(0.0001, gain), t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+            osc.connect(g).connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + dur);
+          },
+          seq(steps) {
+            if (!this.enabled) return;
+            const ctx = this.ensure();
+            if (!ctx) return;
+            let t = ctx.currentTime;
+            for (const st of steps) {
+              if (!st || !st.length) continue;
+              if (st[0] === 'beep') {
+                const [, f, d = 0.08, ty = 'sine', g = 0.04] = st;
+                this.scheduleBeep(t, f, d, ty, g);
+                t += d + 0.01;
+              } else if (st[0] === 'sweep') {
+                const [, f1, f2, d = 0.18, ty = 'sine', g = 0.035] = st;
+                this.scheduleSweep(t, f1, f2, d, ty, g);
+                t += d + 0.01;
+              }
+            }
+          }
+        };
+
+        const sfxPlay = {
+          start: () => audio.seq([
+            ['sweep', 420, 680, 0.18, 'triangle', 0.04],
+            ['beep', 760, 0.06, 'triangle', 0.03],
+          ]),
+          land: () => audio.seq([
+            ['beep', 720, 0.05, 'square', 0.035],
+          ]),
+          firstLand: () => { // 「チャッ」短発（0.1〜0.2秒、小さめ音量）
+            const ctx = audio.ensure();
+            if (!ctx) return;
+            const t = ctx.currentTime;
+            audio.scheduleNoiseBurst(t, 0.12, 0.03);
+          },
+          over: () => audio.seq([
+            ['sweep', 600, 240, 0.28, 'sawtooth', 0.03],
+          ]),
+          jump: () => audio.seq([
+            ['sweep', 520, 820, 0.12, 'triangle', 0.035],
+          ]),
+          pick: () => audio.seq([
+            ['beep', 980, 0.05, 'triangle', 0.03],
+            ['beep', 1240, 0.04, 'sine', 0.025],
+          ]),
+          pause: () => audio.seq([
+            ['beep', 440, 0.04, 'sine', 0.02],
+          ]),
+          resume: () => audio.seq([
+            ['beep', 660, 0.04, 'sine', 0.02],
+          ]),
+          combo: () => audio.seq([
+            ['beep', 880, 0.05, 'triangle', 0.03],
+            ['beep', 1100, 0.05, 'sine', 0.025],
+          ]),
+          fever: () => audio.seq([
+            ['sweep', 500, 1200, 0.22, 'triangle', 0.04],
+            ['beep', 1400, 0.06, 'square', 0.03],
+          ]),
+        };
+
+        // 初回操作でオーディオを解禁
+        const bgmEl = document.getElementById('bgm');
+        let bgmEnabled = true;
+        // 参考画像（色抽出用・表示には使わない）
+        const refImg = new Image();
+        let refReady = false;
+        refImg.onload = () => { refReady = true; try { derivePaletteFromRef(); } catch(_){} };
+        refImg.onerror = () => { refReady = false; };
+        refImg.src = 'assets/IMG_7876.jpg';
+
+        // フェーズ別背景画像
+        const phaseBackgrounds = {
+          phase1: new Image(),
+          phase2: new Image(),
+          phase3: new Image(),
+          final: new Image()
+        };
+        let backgroundsReady = { phase1: false, phase2: false, phase3: false, final: false };
+        
+        phaseBackgrounds.phase1.onload = () => { backgroundsReady.phase1 = true; };
+        phaseBackgrounds.phase1.onerror = () => { backgroundsReady.phase1 = false; };
+        phaseBackgrounds.phase1.src = 'assets/phase1-bg.png';
+        
+        phaseBackgrounds.phase2.onload = () => { backgroundsReady.phase2 = true; };
+        phaseBackgrounds.phase2.onerror = () => { backgroundsReady.phase2 = false; };
+        phaseBackgrounds.phase2.src = 'assets/phase2-bg.png';
+        
+        phaseBackgrounds.phase3.onload = () => { backgroundsReady.phase3 = true; };
+        phaseBackgrounds.phase3.onerror = () => { backgroundsReady.phase3 = false; };
+        phaseBackgrounds.phase3.src = 'assets/phase3-bg.png';
+        
+        phaseBackgrounds.final.onload = () => { backgroundsReady.final = true; };
+        phaseBackgrounds.final.onerror = () => { backgroundsReady.final = false; };
+        phaseBackgrounds.final.src = 'assets/final-bg.png';
+
+        // キャラスプライト（任意）：assets/normal.png（通常）、assets/sleep.png（ゲームオーバー／赤バー上）
+        const charSprite = new Image();
+        let charSpriteReady = false;
+        charSprite.onload = () => { charSpriteReady = true; };
+        charSprite.onerror = () => { charSpriteReady = false; };
+        charSprite.src = 'assets/character.png';
+        const charSpriteSleep = new Image();
+        let charSpriteSleepReady = false;
+        charSpriteSleep.onload = () => { charSpriteSleepReady = true; };
+        charSpriteSleep.onerror = () => { charSpriteSleepReady = false; };
+        charSpriteSleep.src = 'assets/character.png';
+        
+        // ベッドスプライト（赤いバー代替）
+        const bedSprite = new Image();
+        let bedSpriteReady = false;
+        bedSprite.onload = () => { bedSpriteReady = true; console.log('ベッド画像読み込み成功'); };
+        bedSprite.onerror = () => { bedSpriteReady = false; console.log('ベッド画像読み込み失敗'); };
+        bedSprite.src = 'sprites_bed.png';
+        
+        function tryPlayBgm() {
+          if (!bgmEnabled || !bgmEl) return;
+          const p = bgmEl.play();
+          if (p && p.catch) p.catch(() => {});
+        }
+        if (bgmEl) { bgmEl.volume = 0.35; }
+
+        // BGM制御（フェード・停止・再生位置管理・デバウンス）
+        const BGM = {
+          get el(){ return bgmEl; },
+          targetVol: (bgmEl ? bgmEl.volume : 0.35),
+          fadeRaf: null,
+          gameOverHandled: false,
+          clearFade() {
+            if (this.fadeRaf != null) {
+              try { cancelAnimationFrame(this.fadeRaf); } catch(_){}
+              this.fadeRaf = null;
+            }
+          },
+          setVolume(v){ if (!this.el) return; this.el.volume = Math.max(0, Math.min(1, v)); },
+          stopAndReset() {
+            this.clearFade();
+            if (!this.el) return;
+            try { this.el.pause(); } catch(_){}
+            try { this.el.currentTime = 0; } catch(_){}
+          },
+          fadeInFromZero(durSec = 0.8) {
+            if (!this.el || !bgmEnabled) return;
+            this.clearFade();
+            // 再生は必ず stop→seek0→play の順
+            try { this.el.pause(); } catch(_){}
+            try { this.el.currentTime = 0; } catch(_){}
+            this.setVolume(0);
+            tryPlayBgm();
+            const start = performance.now();
+            const startVol = 0;
+            const endVol = this.targetVol;
+            const step = (now) => {
+              const p = Math.min(1, (now - start) / (durSec * 1000));
+              this.setVolume(startVol + (endVol - startVol) * p);
+              if (p < 1) {
+                this.fadeRaf = requestAnimationFrame(step);
+              } else {
+                this.fadeRaf = null;
+                this.setVolume(endVol);
+              }
+            };
+            this.fadeRaf = requestAnimationFrame(step);
+          },
+          onGameOver() {
+            if (this.gameOverHandled) return; // 多重発火防止
+            this.gameOverHandled = true;
+            // 要件順序：停止→位置0→必要なら再開（今回は停止のまま）
+            this.stopAndReset();
+          },
+          onStartPlay() {
+            // リトライ開始時：曲頭からフェードインして再生
+            this.clearFade();
+            this.gameOverHandled = false;
+            if (!bgmEnabled) {
+              // ミュート時は位置だけ0に
+              this.stopAndReset();
+              return;
+            }
+            this.fadeInFromZero(0.8);
+          },
+          resetDebounce(){ this.gameOverHandled = false; }
+        };
+        window.addEventListener('pointerdown', () => { audio.resume(); tryPlayBgm(); });
+        window.addEventListener('keydown', () => { audio.resume(); tryPlayBgm(); });
+
+        // フェーズ表示バッジ
+        const phaseBadge = document.createElement('div');
+        phaseBadge.style.cssText = `
+          position: absolute; right: 12px; top: 96px; padding: 6px 10px; 
+          background: rgba(15,16,32,0.55); color: #ffffff; 
+          font: 600 28px system-ui, -apple-system, sans-serif; 
+          border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+          backdrop-filter: blur(2px); z-index: 100;
+          opacity: 0; transition: opacity 0.4s ease, color 0.8s ease;
+        `;
+        phaseBadge.textContent = '';
+        document.getElementById('wrap').appendChild(phaseBadge);
+        let phaseBadgeHideTimer = null;
+        function showPhaseBadge(text) {
+          if (!phaseBadge) return;
+          // 既存の非表示スケジュールは無効化（常時表示仕様）
+          if (phaseBadgeHideTimer) { try { clearTimeout(phaseBadgeHideTimer); } catch(_){} phaseBadgeHideTimer = null; }
+          // 前の表示を消してからフェードイン
+          phaseBadge.style.opacity = '0';
+          setTimeout(() => {
+            phaseBadge.textContent = text || '';
+            phaseBadge.style.opacity = '1';
+          }, 30);
+        }
+
+        // BGM時間監視とフェーズ制御
+        function updatePhase() {
+          if (!bgmEl || bgmEl.paused || !state.running) return;
+          // DEV強制フェーズ
+          let phase = null;
+          if (DEV.dev && DEV.phase) {
+            phase = DEV.phase;
+          } else {
+            const t = Math.floor(bgmEl.currentTime);
+            phase = resolvePhase(t);
+          }
+          
+          if (phase !== currentPhase) {
+            const prev = currentPhase;
+            currentPhase = phase;
+            applyDifficulty(DIFFICULTY[phase]);
+            
+            // 背景テキスト/囁きを一度リセットしてから、フェーズに応じて再初期化
+            BG.tickerText = '';
+            BG.tickerX = 0;
+            BG.whisperActive = false;
+            BG.whisperText = '';
+            BG.whisperAlpha = 0;
+            BG.whisperTimer = 0;
+            BG.p2Active = false;
+            BG.p2Messages = [];
+            BG.p2Index = 0;
+            BG.p2X = 0;
+            BG.p3Active = false;
+            BG.p3Items = [];
+            BG.p3SpawnTimer = 0;
+            // フェーズ1 → 他フェーズへ移行時の徹底クリーンアップ
+            if (prev === 'phase1' && phase !== 'phase1') {
+              PhaseCleanup.clearPhase1();
+            }
+            initBG(phase);
+
+            // フェーズ切替時：スピード係数をリセットし、フェーズ中に極端なカーブで加速
+            phaseTimer = 0;
+            phaseLenSec = phaseDurationFor(currentPhase);
+            if (currentPhase === 'phase1') {
+              phaseSpeedProfile = { start: 1.0, mid: null, end: 1.5, split: 0.5 };
+            } else if (currentPhase === 'phase2') {
+              // 序盤は現状維持（1.5付近）→中盤1.8→終盤2.5へ段階的に上昇
+              phaseSpeedProfile = { start: 1.5, mid: 1.8, end: 2.5, split: 0.6 };
+            } else if (currentPhase === 'phase3') {
+              const start = 1.0 + Math.random() * 0.2; // 1.0〜1.2
+              const end = 2.8 + Math.random() * 0.2;   // 2.8〜3.0
+              phaseSpeedProfile = { start, mid: 1.8, end, split: 0.5 };
+            } else if (currentPhase === 'final') {
+              phaseSpeedProfile = { start: 2.5, mid: null, end: 3.0, split: 0.5 };
+            }
+            speedCtl.factor = phaseSpeedProfile.start;
+            world.scrollSpeed = speedCtl.base * speedCtl.factor;
+
+            // フェーズ3突入時：全体を一時的にスローモーション（0.5x → 1.0x）
+            if (currentPhase === 'phase3') {
+              timeCtl.active = true;
+              timeCtl.from = 0.5;
+              timeCtl.target = 1.0;
+              timeCtl.t = 0;
+              timeCtl.duration = 3.2; // 数秒かけて元の速度へ
+              timeCtl.factor = timeCtl.from;
+            } else {
+              // それ以外のフェーズでは通常速度
+              timeCtl.active = false;
+              timeCtl.from = 1.0;
+              timeCtl.target = 1.0;
+              timeCtl.t = 0;
+              timeCtl.duration = 0;
+              timeCtl.factor = 1.0;
+            }
+            
+            // フェーズ変更演出
+            phaseTransition.active = true;
+            phaseTransition.timer = 0;
+            
+            // フェーズ表示更新
+            const phaseLabels = {
+              phase1: '現世のうつしよ ― 光の回廊',
+              phase2: '第二階層 ― 揺らぎの明晰夢',
+              phase3: '第三階層 ― 時間が伸びる世界',
+              final:  '夢の楽園 ― 夢の楽園'
+            };
+            phaseBadge.style.color = world.hudColor;
+            // フェーズ切替テキスト（中心ポップアップ）を入れ替え表示
+            // 既存のフェーズ用ポップを消してから追加
+            popups = popups.filter(p => p.kind !== 'phase');
+            popups.push({
+              kind: 'phase',
+              x: (canvas.clientWidth/2)||160, 
+              y: 100, 
+              vx: 0, vy: -12, 
+              life: 0, 
+              text: phaseLabels[phase], 
+              color: world.hudColor
+            });
+            // バッジはフェーズ中 常時表示（フェードインのみ）
+            showPhaseBadge(phaseLabels[phase]);
+            
+            // フェーズ変更サウンド（フェーズ別）
+            if (phase === 'final') {
+              // ファイナルフェーズは特別なサウンド
+              audio.seq([
+                ['sweep', 600, 1800, 0.35, 'sawtooth', 0.06],
+                ['beep', 2000, 0.12, 'triangle', 0.05],
+                ['sweep', 1200, 800, 0.2, 'sine', 0.04],
+              ]);
+            } else {
+              audio.seq([
+                ['sweep', 800, 1400, 0.25, 'triangle', 0.05],
+                ['beep', 1600, 0.08, 'sine', 0.04],
+              ]);
+            }
+            
+            // 既存のフェーズ変更ポップアップは上で置換済み
+            
+            // ファイナルフェーズは追加演出
+            if (phase === 'final') {
+              phaseTransition.duration = 3.0; // 長めの演出
+              screenShake = { active: true, intensity: 8, timer: 0, duration: 2.5 }; // 強めの画面揺れ
+              popups.push({
+                x: (canvas.clientWidth/2)||160, 
+                y: 150, 
+                vx: 0, vy: -8, 
+                life: 0, 
+                text: 'CLIMAX!', 
+                color: '#ff6b6b'
+              });
+            } else {
+              phaseTransition.duration = 2.0;
+              screenShake = { active: true, intensity: 4, timer: 0, duration: 1.2 }; // 軽めの画面揺れ
+            }
+            
+            console.log('[PHASE CHANGE]', phase);
+          }
+        }
+
+        // SFXトグル
+        const sfxBtn = document.getElementById('sfxBtn');
+        // 設定の復元
+        try {
+          const sfxSaved = localStorage.getItem('glucoseman_sfx');
+          if (sfxSaved === '0') audio.enabled = false;
+        } catch (_) {}
+        sfxBtn.textContent = 'SFX: ' + (audio.enabled ? 'ON' : 'OFF');
+        sfxBtn.addEventListener('click', () => {
+          audio.enabled = !audio.enabled;
+          sfxBtn.textContent = 'SFX: ' + (audio.enabled ? 'ON' : 'OFF');
+          try { localStorage.setItem('glucoseman_sfx', audio.enabled ? '1' : '0'); } catch (_) {}
+          if (audio.enabled) audio.resume();
+        });
+
+        // BGMトグル
+        const bgmBtn = document.getElementById('bgmBtn');
+        // 設定の復元
+        try {
+          const bgmSaved = localStorage.getItem('glucoseman_bgm');
+          if (bgmSaved === '0') bgmEnabled = false;
+        } catch (_) {}
+        bgmBtn.textContent = 'BGM: ' + (bgmEnabled ? 'ON' : 'OFF');
+        bgmBtn.addEventListener('click', () => {
+          bgmEnabled = !bgmEnabled;
+          bgmBtn.textContent = 'BGM: ' + (bgmEnabled ? 'ON' : 'OFF');
+          try { localStorage.setItem('glucoseman_bgm', bgmEnabled ? '1' : '0'); } catch (_) {}
+          if (bgmEl) {
+            if (bgmEnabled) tryPlayBgm(); else bgmEl.pause();
+          }
+        });
+
+        const world = {
+          scrollSpeed: 60, // 初速を控えめに
+          gravity: 900, // 落下を緩やかに
+          maxFall: 950,
+          jumpSpeed: 520,
+          platformMinW: 90,
+          platformMaxW: 200,
+          // ベースの縦間隔をやや広げる（初期: 80〜120）
+          platformGapMin: 80,
+          platformGapMax: 120,
+          platformH: 16,
+          platformSpeedGain: 0.006, // 難易度上昇を緩やかに
+          platformColor1: '#3ad1ff',
+          platformColor2: '#58ffa9',
+          // フェーズ制御用パラメータ
+          scrollSpeedMult: 1.0,
+          platformGapScale: 1.0,
+          sugarRate: 0.32,
+          bgTint: 'rgba(0,0,0,0.0)',
+          hudColor: '#ffffff'
+        };
+
+        const player = {
+          x: 0, y: 0, w: 84, h: 132, // キャラサイズを2倍に拡大
+          vx: 0, vy: 0,
+          speed: 280, // horizontal
+          onGround: false,
+          groundId: null,
+          airJumpsLeft: 0,
+        };
+
+        let platforms = [];
+        let sugars = [];
+        let platformIdCounter = 1;
+        let sugarIdCounter = 1;
+        let popups = [];
+
+        // フェーズ別スコア
+        function scoreForCurrentPhase() {
+          switch (currentPhase) {
+            case 'phase1': return 100;
+            case 'phase2': return 150;
+            case 'phase3': return 200;
+            case 'final':  return 300;
+            default: return 100;
+          }
+        }
+
+        function resize() {
+          const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+          const w = Math.floor(window.innerWidth);
+          const h = Math.floor(window.innerHeight);
+          canvas.width = Math.floor(w * dpr);
+          canvas.height = Math.floor(h * dpr);
+          canvas.style.width = w + 'px';
+          canvas.style.height = h + 'px';
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        function reset() {
+          state.running = true;
+          state.gameOver = false;
+          state.paused = false;
+          state.score = 0;
+          state.depth = 0;
+          state.time = 0;
+          state.sugars = 0;
+          state.comboCount = 0;
+          state.comboMult = 1;
+          state.comboTime = 0;
+          state.fever = false;
+          state.feverTime = 0;
+          state.pickStreak = 0;
+          state.scoredPids = new Set();
+          initBG();
+          // 縦画面（スマホ）向けに軽くスケーリング
+          const Hview = canvas.clientHeight || window.innerHeight;
+          const scale = Math.max(0.75, Math.min(1.1, Hview / 800));
+          world.scrollSpeed = 60 * scale;
+          // スピード制御の基準値（ゲーム開始時）
+          speedCtl.base = world.scrollSpeed;
+          phaseTimer = 0;
+          phaseLenSec = phaseDurationFor('phase1');
+          phaseSpeedProfile = { start: 1.0, mid: null, end: 1.5, split: 0.5 };
+          speedCtl.factor = phaseSpeedProfile.start;
+          world.jumpSpeed = 520 * Math.max(0.9, Math.min(1.06, scale + 0.06));
+          // 初期フェーズは 80〜120 を基準（スケール適用）
+          world.platformGapMin = Math.round(80 * scale);
+          world.platformGapMax = Math.round(120 * scale);
+          platforms = [];
+          sugars = [];
+          popups = [];
+
+          // スタート足場を中央に生成し、その上から開始
+          const startW = Math.min(Math.max(220, Math.floor(canvas.clientWidth * 0.6)), 280);
+          const startX = Math.max(0, (canvas.clientWidth - startW) / 2);
+          const startY = 160;
+          const startPf = { id: platformIdCounter++, x: startX, y: startY, w: startW, h: world.platformH + 4, hue: 0, safe: true };
+          platforms.push(startPf);
+          maybeAddSugar(startPf);
+
+          player.x = startPf.x + startPf.w / 2 - player.w / 2;
+          player.y = startPf.y - player.h;
+          player.vx = 0; player.vy = 0; player.onGround = true; player.groundId = startPf.id; player.airJumpsLeft = state.fever ? 1 : 0;
+          state.safePlatformId = startPf.id;
+          state.leftSafe = false;
+          state.safeFadeT = 0;
+          state.safeFading = false;
+          state.activated = false;
+          state.lastScorePid = null;
+
+          // フェーズシステム初期化
+          currentPhase = 'phase1';
+          applyDifficulty(DIFFICULTY.phase1);
+          phaseTransition.active = false;
+          // フェーズ表示（フェーズ中も常時表示、フェードインのみ）
+          if (phaseBadge) {
+            phaseBadge.style.color = world.hudColor;
+            showPhaseBadge('現世のうつしよ ― 光の回廊');
+          }
+
+          // 画面下方向に足場を十分に用意
+          const gapMin = Math.floor(world.platformGapMin * world.platformGapScale);
+          const gapMax = Math.floor(world.platformGapMax * world.platformGapScale);
+          let y = startY + rand(gapMin, gapMax);
+          while (y < canvas.clientHeight + 800) {
+            platforms.push(makePlatform(y));
+            y += rand(gapMin, gapMax);
+          }
+        }
+
+        function makePlatform(y) {
+          // 基準幅からフェーズに応じて 40〜60%（phase1）/ 30〜50%（phase2,3,final）に縮小
+          const baseW = rand(world.platformMinW, world.platformMaxW);
+          const useNarrower = (currentPhase === 'phase2' || currentPhase === 'phase3' || currentPhase === 'final');
+          const sMin = useNarrower ? 0.30 : 0.40;
+          const sMax = useNarrower ? 0.50 : 0.60;
+          const s = sMin + Math.random() * (sMax - sMin);
+          const w = Math.max(24, Math.floor(baseW * s));
+          const x = Math.floor(Math.random() * Math.max(1, canvas.clientWidth - w));
+          const pf = { id: platformIdCounter++, x, y, w, h: world.platformH, hue: Math.random() * 360, stayT: 0, fading: false, fadeT: 0 };
+          maybeAddSugar(pf);
+          return pf;
+        }
+
+        function rand(a, b) { return Math.floor(a + Math.random() * (b - a)); }
+
+        function maybeAddSugar(pf) {
+          if (pf && pf.safe) return; // セーフ足場には置かない
+          if (Math.random() < world.sugarRate) {
+            sugars.push({
+              id: sugarIdCounter++,
+              x: pf.x + pf.w / 2 - 5,
+              y: pf.y - 10,
+              r: 7,
+              alive: true,
+            });
+          }
+        }
+
+        function currentMultiplier() {
+          return state.fever ? 6 : Math.max(1, state.comboMult);
+        }
+
+        function startFever() {
+          state.fever = true;
+          state.feverTime = 15.0;
+          sfxPlay.fever();
+          popups.push({x: (canvas.clientWidth/2)||160, y: 120, vx: 0, vy: -16, life: 0, text: 'FEVER!', color: '#ffd96a'});
+          // 空中でも即座に2段ジャンプ可能にする
+          player.airJumpsLeft = Math.max(player.airJumpsLeft, 1);
+        }
+
+        // Input
+        const keys = new Set();
+        const JUMP_COYOTE = 0.12; // 離れてからもジャンプできる猶予
+        const JUMP_BUFFER = 0.14; // 押し先行の猶予
+        const LAND_TOL = 6; // 足場上面の吸着許容（px）
+        const DETACH_AT_TOP = 6; // 画面上端付近で足場をすり抜けにするしきい値（px）
+        const control = { coyote: 0, jumpBuf: 0 };
+        window.addEventListener('keydown', (e) => {
+          if (e.repeat) return;
+          if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.add('left');
+          if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.add('right');
+          if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+            keys.add('jump');
+            control.jumpBuf = JUMP_BUFFER;
+          }
+          if (e.code === 'Escape') {
+            if (state.running && !state.gameOver) {
+              if (!state.paused) pauseGame(); else resumeGame();
+            }
+          }
+          if (!state.running && (e.code === 'Enter' || e.code === 'Space')) {
+            start();
+          }
+          if (state.gameOver && (e.code === 'Enter' || e.code === 'Space')) {
+            start();
+          }
+        });
+        window.addEventListener('keyup', (e) => {
+          if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.delete('left');
+          if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.delete('right');
+          if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') keys.delete('jump');
+        });
+
+        // タッチボタン（マルチタッチ対応）
+        function bindHold(btn, key, isJump=false) {
+          if (!btn) return;
+          const down = (ev) => {
+            ev.preventDefault();
+            keys.add(key);
+            if (isJump) control.jumpBuf = JUMP_BUFFER;
+            btn.dataset.pid = ev.pointerId;
+            btn.setAttribute('data-on','1');
+          };
+          const up = (ev) => {
+            if (String(btn.dataset.pid) !== String(ev.pointerId)) return;
+            keys.delete(key);
+            btn.removeAttribute('data-on');
+            delete btn.dataset.pid;
+          };
+          btn.addEventListener('pointerdown', down, {passive:false});
+          btn.addEventListener('pointerup', up, {passive:false});
+          btn.addEventListener('pointercancel', up, {passive:false});
+          btn.addEventListener('pointerleave', up, {passive:false});
+        }
+        bindHold(document.getElementById('btnLeft'), 'left');
+        bindHold(document.getElementById('btnRight'), 'right');
+        bindHold(document.getElementById('btnJumpL'), 'jump', true);
+        bindHold(document.getElementById('btnJumpR'), 'jump', true);
+
+        startBtn.addEventListener('click', start);
+        function start() {
+          overlay.style.display = 'none';
+          document.getElementById('panel').innerHTML = panelHTML('running');
+          audio.resume();
+          sfxPlay.start();
+          // BGMは曲頭からフェードイン。多重再生防止のため stop→seek0→play の順。
+          BGM.onStartPlay();
+          reset();
+        }
+
+        function pauseGame() {
+          if (!state.running || state.gameOver) return;
+          state.paused = true;
+          overlay.style.display = 'flex';
+          const panel = document.getElementById('panel');
+          panel.innerHTML = panelHTML('paused');
+          const resumeBtn = document.getElementById('resumeBtn');
+          const restartBtn = document.getElementById('restartBtn');
+          if (resumeBtn) resumeBtn.addEventListener('click', resumeGame);
+          if (restartBtn) restartBtn.addEventListener('click', start);
+          sfxPlay.pause();
+        }
+
+        function resumeGame() {
+          if (!state.paused) return;
+          state.paused = false;
+          overlay.style.display = 'none';
+          document.getElementById('panel').innerHTML = panelHTML('running');
+          audio.resume();
+          sfxPlay.resume();
+        }
+
+        function panelHTML(mode) {
+          if (mode === 'gameover') {
+            return `
+              <div class="title">ドリームリセット！</div>
+              <div class="subtitle">スコア: ${state.score}</div>
+              <div class="small" style="margin-bottom:8px">最高記録: ${state.best}</div>
+              <div class="btn" id="restartBtn">二度寝する？ (Enter/Space)</div>
+              <div class="small">操作: ← → または A D</div>
+            `;
+          }
+          if (mode === 'paused') {
+            return `
+              <div class="title">一時停止</div>
+              <div class="subtitle">スコア: ${state.score} ／ 糖: ${state.sugars}</div>
+              <div class="btn" id="resumeBtn">再開 (Esc)</div>
+              <div class="btn" id="restartBtn" style="margin-left:8px">リスタート</div>
+              <div class="small">Esc で再開。Enter/Space でリスタート</div>
+            `;
+          }
+          // running/ready placeholder
+          return `
+            <div class="title">グルコースマンの落ちゲー</div>
+            <div class="subtitle">下から上へせり上がる足場を乗り継ぎながら、できるだけ下へ降り続けよう！</div>
+            <div>操作: <span class="key">←</span> <span class="key">→</span> または <span class="key">A</span> <span class="key">D</span> ／ ジャンプ: <span class="key">↑</span> <span class="key">W</span> <span class="key">Space</span></div>
+            <div class="small">スマホ: 画面下の ← ⤴︎ → ボタン</div>
+            <div class="small">フィーバー中は 2 段ジャンプが可能！</div>
+            <div class="small">落ち続けて距離を稼ぎ、足場を踏み外して画面下に落ちるとゲームオーバー</div>
+            <div class="small" style="margin-top:8px">最高記録: ${state.best}</div>
+            <div class="btn" id="startBtn">ゲーム開始 (Enter/Space)</div>
+          `;
+        }
+
+        // Game loop
+        let last = performance.now();
+        function tick(now) {
+          const rawDt = Math.min(0.033, (now - last) / 1000);
+          last = now;
+          // スローモーション適用（フェーズ3突入時など）
+          if (timeCtl.active) {
+            timeCtl.t += rawDt;
+            const p = Math.max(0, Math.min(1, timeCtl.t / Math.max(0.001, timeCtl.duration)));
+            timeCtl.factor = timeCtl.from + (timeCtl.target - timeCtl.from) * p;
+            if (p >= 1) { timeCtl.active = false; timeCtl.factor = timeCtl.target; }
+          }
+          const dt = rawDt * Math.max(0.05, timeCtl.factor);
+
+          if (state.running && !state.paused) update(dt);
+          draw();
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+
+        function update(dt) {
+          state.time += dt;
+          
+          // フェーズ制御の更新
+          updatePhase();
+          
+          // フェーズ変更演出の更新
+          if (phaseTransition.active) {
+            phaseTransition.timer += dt;
+            if (phaseTransition.timer >= phaseTransition.duration) {
+              phaseTransition.active = false;
+            }
+          }
+          
+          // 画面揺れの更新
+          if (screenShake.active) {
+            screenShake.timer += dt;
+            if (screenShake.timer >= screenShake.duration) {
+              screenShake.active = false;
+              screenShake.intensity = 0;
+            }
+          }
+          
+          // 難易度制御：フェーズ中に極端なカーブで加速
+          phaseTimer += dt;
+          const p = clamp01(phaseTimer / Math.max(0.001, phaseLenSec));
+          let f = phaseSpeedProfile.start;
+          if (phaseSpeedProfile.mid != null) {
+            // 2段階カーブ：前半は開始→中盤、後半は中盤→終了
+            const split = Math.max(0.05, Math.min(0.95, phaseSpeedProfile.split || 0.5));
+            if (p < split) {
+              const q = easeInOut(p / split);
+              f = lerp(phaseSpeedProfile.start, phaseSpeedProfile.mid, q);
+            } else {
+              const q = easeInOut((p - split) / Math.max(0.001, 1 - split));
+              f = lerp(phaseSpeedProfile.mid, phaseSpeedProfile.end, q);
+            }
+          } else {
+            // 単純に開始→終了へ緩やかに加速
+            f = lerp(phaseSpeedProfile.start, phaseSpeedProfile.end, easeInOut(p));
+          }
+          speedCtl.factor = f;
+          world.scrollSpeed = speedCtl.base * speedCtl.factor;
+          // 深度は常時進行（赤いバー上でも進む）
+          state.depth += world.scrollSpeed * dt * 0.12; // px -> meters scale
+          // 観賞モード（未アクティブのまま）で一定深度に到達したらエンディング
+          if (!state.activated && state.depth >= state.passiveEndDepth) {
+            gameOver();
+          }
+
+          // 背景ティッカーとポップアップ更新（UIより背面）: フェーズ1限定
+          if (currentPhase === 'phase1') {
+            BG.tickerX -= BG.tickerSpeed * dt;
+          }
+          // フェーズ2テロップのスクロール更新（左→右）
+          if (BG.p2Active) {
+            BG.p2X += BG.p2Speed * dt;
+          }
+          
+          // フェーズ3：夢の断片ポップアップ更新（日本語フレーズ）— フェードをゆっくりに
+          if (currentPhase === 'phase3' && BG.p3Active) {
+            BG.p3SpawnTimer -= dt;
+            if (BG.p3SpawnTimer <= 0) {
+              BG.p3SpawnTimer = 1.8 + Math.random() * 2.0; // ややゆっくり出現
+              const W = canvas.clientWidth, H = canvas.clientHeight;
+              const text = PHASE3_PHRASES[(Math.random() * PHASE3_PHRASES.length) | 0];
+              BG.p3Items.push({
+                text,
+                x: Math.random() * (W * 0.8) + W * 0.1,
+                y: Math.random() * (H * 0.65) + H * 0.12,
+                vx: (Math.random() * 8 - 4),
+                vy: (-6 - Math.random() * 6),
+                life: 0,
+                ttl: 4.5 + Math.random() * 2.5 // 表示時間を長めに
+              });
+            }
+            for (const it of BG.p3Items) {
+              it.life += dt;
+              it.x += it.vx * dt;
+              it.y += it.vy * dt;
+              // ゆっくり減速し、少し上昇
+              it.vx *= (1 - Math.min(1, dt * 0.6));
+              it.vy *= (1 - Math.min(1, dt * 0.4));
+            }
+            BG.p3Items = BG.p3Items.filter(it => it.life < it.ttl);
+          } else {
+            // フェーズ3以外では片付け
+            BG.p3Items = [];
+          }
+          if (currentPhase === 'phase1') {
+            // ポップアップ生成（約2.2～4.0秒間隔）
+            BG.spawnTimer -= dt;
+            if (BG.spawnTimer <= 0) {
+              BG.spawnTimer = 2.2 + Math.random() * 1.8;
+              const text = POPUP_WORDS[(Math.random() * POPUP_WORDS.length) | 0];
+              const W = canvas.clientWidth, H = canvas.clientHeight;
+              BG.popups.push({
+                x: Math.random() * W,
+                y: 40 + Math.random() * (H * 0.6),
+                vx: (Math.random() * 20 - 10),
+                vy: -20 - Math.random() * 20,
+                life: 0, ttl: 2.5 + Math.random() * 1.2,
+                text,
+              });
+            }
+            for (const p of BG.popups) {
+              p.life += dt;
+              p.x += p.vx * dt;
+              p.y += p.vy * dt;
+              p.vx *= (1 - Math.min(1, dt * 1.5));
+              p.vy += 10 * dt; // ほんのり重力
+            }
+            BG.popups = BG.popups.filter(p => p.life < p.ttl);
+          } else {
+            // フェーズ1以外では即時クリア（再出現防止）
+            BG.popups.length = 0;
+          }
+
+          // 入力（横移動）
+          player.vx = 0;
+          if (keys.has('left')) player.vx -= player.speed;
+          if (keys.has('right')) player.vx += player.speed;
+          player.x += player.vx * dt;
+
+          // Wrap horizontally for flow
+          const W = canvas.clientWidth, H = canvas.clientHeight;
+          if (player.x < -player.w) player.x = W;
+          if (player.x > W) player.x = -player.w;
+
+          // ジャンプ猶予のタイマー更新
+          if (player.onGround) control.coyote = JUMP_COYOTE; else control.coyote = Math.max(0, control.coyote - dt);
+          control.jumpBuf = Math.max(0, control.jumpBuf - dt);
+
+          // 先にバッファ/コヨーテ/フィーバー2段ジャンプを適用
+          if (control.jumpBuf > 0) {
+            let canJump = (player.onGround || control.coyote > 0);
+            let usedAir = false;
+            if (!canJump && state.fever && player.airJumpsLeft > 0) {
+              // 空中での2段ジャンプ（フィーバー限定）
+              usedAir = true;
+              player.airJumpsLeft -= 1;
+              canJump = true;
+            }
+            if (canJump) {
+              player.vy = -world.jumpSpeed;
+              player.onGround = false;
+              player.groundId = null;
+              control.jumpBuf = 0;
+              sfxPlay.jump();
+              anim.jumpKick = usedAir ? 1.2 : 1; // 2段時は少し強め
+              if (usedAir) {
+                // スピン開始（約1回転、徐々に減衰）
+                anim.spinTime = 0.38;
+                anim.spinVel = 18; // rad/s おおよそ 18*0.38 ≒ 6.8rad ≒ 1.08回転
+              }
+            }
+          }
+
+          // 重力（縦移動）をサブステップで解決して貫通を防ぐ
+          const wasOnGroundBefore = player.onGround;
+          let landedThisFrame = false;
+          let landedOnSafe = false;
+          let remain = dt;
+          const maxStep = 1 / 240; // 240Hzで分割
+          while (remain > 0) {
+            const step = Math.min(maxStep, remain);
+            const prevY = player.y;
+            player.vy = Math.min(world.maxFall, player.vy + world.gravity * step);
+            player.y += player.vy * step;
+
+            // 当たり判定（各サブステップ）
+            const prevBottom = prevY + player.h;
+            const currBottom = player.y + player.h;
+            const prevTop = prevY;
+            const currTop = player.y;
+            player.onGround = false;
+            if (player.vy >= 0) {
+              for (const pf of platforms) {
+                // 未アクティブ中に赤バー上にいる間は、通常足場との接触を無効化
+                if (!state.activated && player.groundId === state.safePlatformId && !pf.safe) continue;
+                // 上端すり抜けは、アクティブ化前の初着地の妨げにならないよう未アクティブ中は無効化
+                if (state.activated && pf.y <= DETACH_AT_TOP && !pf.safe) continue; // 赤いバー以外は上端ですり抜け（アクティブ後のみ）
+                const overlapX = (player.x + player.w) > (pf.x - 1) && player.x < (pf.x + pf.w + 1);
+                if (!overlapX) continue;
+                const crossTop = (prevBottom <= pf.y && currBottom >= pf.y);
+                const withinTol = (currBottom >= pf.y && currBottom <= pf.y + LAND_TOL);
+                if (crossTop || withinTol) {
+                  player.y = pf.y - player.h;
+                  player.vy = 0;
+                  player.onGround = true;
+                  player.groundId = pf.id;
+                  landedThisFrame = landedThisFrame || !wasOnGroundBefore;
+                  landedOnSafe = !!pf.safe;
+                  break;
+                }
+              }
+            } else {
+              // 上向き（ジャンプ上昇中）の頭ぶつかり判定は赤いバーのみ有効（すり抜けない）
+              for (const pf of platforms) {
+                if (!pf.safe) continue; // 赤いバー以外は上昇時すり抜け
+                const overlapX = (player.x + player.w) > (pf.x - 1) && player.x < (pf.x + pf.w + 1);
+                if (!overlapX) continue;
+                const pfBottom = pf.y + pf.h;
+                const hitBottom = (prevTop >= pfBottom && currTop <= pfBottom);
+                if (hitBottom) {
+                  player.y = pfBottom; // 下に押し戻す
+                  player.vy = 0;
+                  break;
+                }
+              }
+            }
+            remain -= step;
+          }
+          if (landedThisFrame) {
+            anim.landKick = 1; // 着地つぶれ
+            // フィーバー中は2段ジャンプをリチャージ
+            player.airJumpsLeft = state.fever ? 1 : 0;
+            const gpf = platforms.find(p => p.id === player.groundId);
+            if (gpf) {
+              let firstOnThis = false;
+              // 未アクティブ → 非セーフ初着地でアクティブ化、赤バーをフェードアウト
+              if (!state.activated && !gpf.safe) {
+                state.activated = true;
+                state.leftSafe = true;
+                state.safeFading = true;
+                // スコア加点：未踏の足場のみ、フェーズ別の基本点
+                if (!state.scoredPids.has(gpf.id)) {
+                  const add = scoreForCurrentPhase();
+                  state.score += add;
+                  state.scoredPids.add(gpf.id);
+                  popups.push({ x: player.x + player.w/2, y: player.y - 16, vx: 0, vy: -24, life: 0, text: `+${add}`, color: world.hudColor });
+                  firstOnThis = true;
+                }
+                state.lastScorePid = gpf.id;
+              } else if (state.activated && !gpf.safe) {
+                // アクティブ後：未踏の足場に初着地でのみ加点（同一生成IDには二度と加点しない）
+                if (!state.scoredPids.has(gpf.id)) {
+                  const add = scoreForCurrentPhase();
+                  state.score += add;
+                  state.scoredPids.add(gpf.id);
+                  popups.push({ x: player.x + player.w/2, y: player.y - 16, vx: 0, vy: -24, life: 0, text: `+${add}`, color: world.hudColor });
+                  firstOnThis = true;
+                }
+                state.lastScorePid = gpf.id;
+              }
+              // SFX：最初の足場（safe=true）は常に無音。
+              // 非セーフ足場の初着地のみ「チャッ」を鳴らす。それ以外の着地は従来のlandを鳴らす。
+              if (!gpf.safe) {
+                if (firstOnThis) sfxPlay.firstLand();
+                else sfxPlay.land();
+              }
+            }
+          }
+
+          // アニメパラメータ更新
+          const targetAir = player.onGround ? 0 : 1;
+          anim.air += (targetAir - anim.air) * Math.min(1, dt * 10);
+          anim.jumpKick = Math.max(0, anim.jumpKick - dt * 6);
+          anim.landKick = Math.max(0, anim.landKick - dt * 6);
+          // squash: ジャンプ時は縦伸び、着地時はつぶれ
+          const baseSquash = 1 + anim.landKick * 0.18 - anim.jumpKick * 0.12;
+          anim.squash += (baseSquash - anim.squash) * Math.min(1, dt * 10);
+          // tilt: 横移動で少し傾く
+          const targetTilt = (player.vx / Math.max(1, player.speed)) * 0.18;
+          anim.tilt += (targetTilt - anim.tilt) * Math.min(1, dt * 8);
+          anim.leafPhase += dt * (4 + 3 * anim.air + 3 * anim.jumpKick);
+          // スピン減衰
+          if (anim.spinTime > 0) {
+            anim.spin += anim.spinVel * dt;
+            anim.spinVel += (-anim.spinVel) * Math.min(1, dt * 6);
+            anim.spinTime = Math.max(0, anim.spinTime - dt);
+          } else {
+            anim.spin = 0;
+            anim.spinVel = 0;
+          }
+
+          // 地面にいる間は足場に粘着（微小誤差で抜けない）
+          if (player.onGround && player.groundId != null) {
+            const pf = platforms.find(p => p.id === player.groundId);
+            if (pf && pf.y > DETACH_AT_TOP && player.x + player.w > pf.x - 1 && player.x < pf.x + pf.w + 1) {
+              player.y = pf.y - player.h;
+              player.vy = 0;
+            } else {
+              player.onGround = false;
+              player.groundId = null;
+            }
+          }
+
+          // 立ち続け判定用：足場を離れたらタイマーをリセット
+          if (!player.onGround && state.lastGroundId != null) {
+            const last = platforms.find(p => p.id === state.lastGroundId);
+            if (last && !last.safe) last.stayT = 0;
+            state.lastGroundId = null;
+          } else if (player.onGround) {
+            state.lastGroundId = player.groundId;
+          }
+
+
+          // ワールドの自動スクロール（上方向）
+          const scroll = world.scrollSpeed * dt;
+          player.y -= scroll;
+          for (const p of platforms) { if (!p.safe) p.y -= scroll; }
+          for (const s of sugars) s.y -= scroll;
+          if (state.safeGlow) state.safeGlow.y -= scroll;
+          if (state.safeGlow) state.safeGlow.y -= scroll;
+
+          // 同一足場に立ち続けるとフェードアウト（例: 5秒で消滅）
+          const STAND_LIMIT = 5.0;
+          const FADE_DURATION = 1.0;
+          if (player.onGround && player.groundId != null) {
+            const pf = platforms.find(p => p.id === player.groundId);
+            if (pf && !pf.safe) {
+              pf.stayT = (pf.stayT || 0) + dt;
+              if (!pf.fading && pf.stayT >= STAND_LIMIT) {
+                pf.fading = true; pf.fadeT = 0;
+              }
+            }
+          }
+          // フェード進行と消滅処理（安全バーは既存ロジックで処理）
+          for (const p of platforms) {
+            if (!p.safe && p.fading) {
+              p.fadeT = Math.min(1, p.fadeT + dt / Math.max(0.001, FADE_DURATION));
+            }
+          }
+          // フェード終了で削除（プレイヤーが上にいれば落下させる）
+          for (const p of platforms.slice()) {
+            if (!p.safe && p.fading && p.fadeT >= 1) {
+              if (player.groundId === p.id) { player.onGround = false; player.groundId = null; }
+              platforms = platforms.filter(q => q.id !== p.id);
+            }
+          }
+
+          // 足場の生成/掃除
+          // 画面上に消えたものを削除。ただし現在接地中の足場は保持して勝手に消えないようにする
+          // セーフ足場のフェード処理と削除
+          if (state.safeFading && state.safePlatformId != null) {
+            state.safeFadeT = Math.min(1, state.safeFadeT + dt / Math.max(0.001, state.safeFadeDuration));
+            if (state.safeFadeT >= 1) {
+              const sp = platforms.find(p => p.id === state.safePlatformId);
+              if (sp) {
+                state.safeGlow = { x: sp.x, y: sp.y, w: sp.w, h: sp.h, t: 0.8 };
+              }
+              platforms = platforms.filter(p => p.id !== state.safePlatformId);
+              state.safePlatformId = null; // 完全に消去
+              state.safeFading = false;
+            }
+          }
+          // 画面上に消えたものを削除。ただし現在接地中の足場は保持して勝手に消えないようにする
+          platforms = platforms.filter(p => (p.y + p.h > -40) || (p.id === player.groundId));
+          let maxY = platforms.length ? Math.max(...platforms.map(p => p.y)) : -40;
+          while (maxY < H + 600) {
+            const gapMin = Math.floor(world.platformGapMin * world.platformGapScale);
+            const gapMax = Math.floor(world.platformGapMax * world.platformGapScale);
+            maxY += rand(gapMin, gapMax);
+            platforms.push(makePlatform(maxY));
+          }
+
+          // Collect sugars
+          for (const s of sugars) {
+            if (!s.alive) continue;
+            const sx = s.x, sy = s.y, r = s.r;
+            // AABB vs circle approximation with player's bounding box
+            const px = player.x, py = player.y, pw = player.w, ph = player.h;
+            const nx = Math.max(px, Math.min(sx, px + pw));
+            const ny = Math.max(py, Math.min(sy, py + ph));
+            const dx = sx - nx, dy = sy - ny;
+            if (dx*dx + dy*dy <= (r*r)) {
+              s.alive = false;
+              state.sugars += 1;
+              // コンボ処理
+              if (!state.fever) {
+                // コンボ（スコア用）は継続
+                state.comboTime = state.comboWindow;
+                const prevMult = state.comboMult;
+                state.comboCount += 1;
+                state.comboMult = Math.min(5, 1 + Math.floor(state.comboCount / 3));
+                if (state.comboMult > prevMult) {
+                  sfxPlay.combo();
+                  popups.push({x: sx, y: sy, vx: 0, vy: -18, life: 0, text: `x${state.comboMult}!`, color: '#a8ffcc'});
+                }
+                // 5個取得でスーパー（フィーバー）発動
+                state.pickStreak += 1;
+                if (state.pickStreak >= state.feverNeed) {
+                  startFever();
+                  state.pickStreak = 0;
+                }
+              } else {
+                // スーパー中は時間延長なし（一定時間固定）
+              }
+              // スコアは足場着地でのみ加算。糖はカウントのみ。
+              sfxPlay.pick();
+              popups.push({x: sx, y: sy, vx: (Math.random()*14-7), vy: -22, life: 0, text: `+糖` , color: '#ffe58a'});
+            }
+          }
+          // Cleanup sugars that went off screen or collected
+          // 生成直後に画面外（下側）にある糖が即削除されないよう、余裕を広く取る
+          sugars = sugars.filter(s => s.alive && s.y + 12 > -40 && s.y < H + 800);
+
+          // セーフ残光の寿命
+          if (state.safeGlow) {
+            state.safeGlow.t -= dt;
+            if (state.safeGlow.t <= 0) state.safeGlow = null;
+          }
+
+          // コンボ・フィーバー時間経過
+          if (!state.fever) {
+            state.comboTime = Math.max(0, state.comboTime - dt);
+            if (state.comboTime === 0 && state.comboCount > 0) {
+              state.comboCount = 0;
+              state.comboMult = 1;
+            }
+          } else {
+            state.feverTime -= dt;
+            if (state.feverTime <= 0) {
+              state.fever = false;
+              state.comboCount = 0;
+              state.comboMult = 1;
+              // フィーバー終了と共に空中での2段ジャンプ権を削除
+              if (!player.onGround) player.airJumpsLeft = 0;
+              state.pickStreak = 0;
+            }
+          }
+
+          // ポップアップ更新
+          for (const p of popups) {
+            p.life += dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy -= 30 * dt;
+          }
+          popups = popups.filter(p => p.life < 1.0);
+
+          // Game over: fell off bottom of screen
+          if (player.y > H) {
+            gameOver();
+          }
+        }
+
+        function gameOver() {
+          state.running = false;
+          state.gameOver = true;
+          // BGM制御：デバウンス付きで即停止→曲頭へ
+          BGM.onGameOver();
+          state.best = Math.max(state.best, state.score);
+          localStorage.setItem('glucoseman_best', String(state.best));
+          // HUDはスコアとフェーズ名のみを小さく表示
+          const phaseLabelsHUD = {
+            phase1: '現世のうつしよ ― 光の回廊',
+            phase2: '第二階層 ― 揺らぎの明晰夢',
+            phase3: '第三階層 ― 時間が伸びる世界',
+            final:  '夢の楽園 ― 夢の楽園'
+          };
+          hud.textContent = `フェーズ: ${phaseLabelsHUD[currentPhase]||currentPhase} ／ スコア: ${state.score}`;
+          overlay.style.display = 'flex';
+          const panel = document.getElementById('panel');
+          panel.innerHTML = panelHTML('gameover');
+          const restartBtn = document.getElementById('restartBtn');
+          if (restartBtn) restartBtn.addEventListener('click', start);
+          sfxPlay.over();
+        }
+
+        function draw() {
+          const W = canvas.clientWidth, H = canvas.clientHeight;
+          // 前フレームの描画内容を完全クリア（古い文字や残像を確実に消す）
+          ctx.clearRect(0, 0, W, H);
+          
+          // 画面揺れ適用
+          ctx.save();
+          if (screenShake.active) {
+            const progress = 1 - (screenShake.timer / screenShake.duration);
+            const intensity = screenShake.intensity * progress;
+            const shakeX = (Math.random() - 0.5) * intensity;
+            const shakeY = (Math.random() - 0.5) * intensity;
+            ctx.translate(shakeX, shakeY);
+          }
+          
+          // Background gradient or image（phase3 は夕焼けジャングル＋ゆらぎ演出）
+          const currentBg = phaseBackgrounds[currentPhase];
+          if (currentPhase === 'phase3' && currentBg && backgroundsReady[currentPhase]) {
+            // 背景を横方向に帯状に分割し、わずかにオフセット/スケールしてゆらぎを表現
+            const bands = 24;
+            const bh = Math.ceil(H / bands);
+            const t = state.time;
+            const iw = currentBg.naturalWidth || currentBg.width || W;
+            const ih = currentBg.naturalHeight || currentBg.height || H;
+            for (let i = 0; i < bands; i++) {
+              const sy = i * bh;
+              const sh = Math.min(bh, H - sy);
+              const phase = i / bands;
+              const offset = Math.sin(phase * Math.PI * 2 + t * 0.6) * 8; // 横ゆらぎ
+              const scaleX = 1 + 0.015 * Math.sin(phase * Math.PI + t * 0.4); // 横引き延ばし
+              const dw = Math.floor(W * scaleX);
+              const dx = Math.floor(- (dw - W) / 2 + offset);
+              // 画像の対応する帯を等比で切り出して貼る（常に全幅を使う）
+              const srcY = Math.floor(sy * ih / H);
+              const srcH = Math.max(1, Math.ceil(sh * ih / H));
+              ctx.drawImage(currentBg, 0, srcY, iw, srcH, dx, sy, dw, sh);
+            }
+            // 夕焼けティントを重ねる
+            ctx.save();
+            const sunset = ctx.createLinearGradient(0, 0, 0, H);
+            sunset.addColorStop(0, 'rgba(255,140,90,0.20)');
+            sunset.addColorStop(1, 'rgba(80,30,60,0.18)');
+            ctx.fillStyle = sunset;
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+          } else if (currentBg && backgroundsReady[currentPhase]) {
+            // フェーズ専用背景画像を描画
+            ctx.drawImage(currentBg, 0, 0, W, H);
+          } else {
+            // デフォルトのグラデーション背景
+            const grad = ctx.createLinearGradient(0, 0, 0, H);
+            grad.addColorStop(0, '#bfe1ff');
+            grad.addColorStop(1, '#ffffff');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, W, H);
+          }
+
+          // Subtle grid for depth
+          ctx.save();
+          ctx.globalAlpha = 0.12;
+          ctx.strokeStyle = '#7a8bbb';
+          const step = 40;
+          ctx.beginPath();
+          for (let x = 0; x < W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+          for (let y = 0; y < H; y += step) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+          ctx.stroke();
+          ctx.restore();
+
+          // フェーズ2：ニュース番組風テロップ
+          // その他：通常の背景ティッカー（ランダム）
+          if (false && BG.whisperActive && BG.whisperAlpha > 0) {
+            // 旧：囁きテキストは無効化
+            // 残置（将来の切替用）
+            
+          } else if (currentPhase === 'phase2' && BG.p2Active) {
+            // フェーズ2専用：半透明の黒帯 + 白文字、左→右にスクロール
+            const barH = 64;
+            const barY = H - barH - 6;
+            ctx.save();
+            // 帯
+            ctx.globalAlpha = 0.6;
+            ctx.fillStyle = 'rgba(0,0,0,0.75)';
+            ctx.fillRect(0, barY, W, barH);
+            ctx.globalAlpha = 1;
+            // 文字
+            ctx.font = 'bold 28px system-ui, -apple-system, sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.textBaseline = 'alphabetic';
+            const msg = BG.p2Messages[BG.p2Index] || '';
+            const wText = ctx.measureText(msg).width;
+            // 初回フレームで左外から開始位置を調整
+            if (BG.p2X < -W*2) {
+              BG.p2X = -wText - BG.p2Gap;
+            }
+            // テキスト描画（左→右）
+            const tx = Math.floor(BG.p2X);
+            const ty = Math.floor(barY + barH - 14);
+            ctx.fillText(msg, tx, ty);
+            // 右端を通過したら次メッセージへ
+            if (BG.p2X > W + BG.p2Gap) {
+              BG.p2Index = (BG.p2Index + 1) % BG.p2Messages.length;
+              const nextMsg = BG.p2Messages[BG.p2Index] || '';
+              const wNext = ctx.measureText(nextMsg).width;
+              BG.p2X = -wNext - BG.p2Gap;
+            }
+            // 上縁に薄い線
+            ctx.globalAlpha = 0.2;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, barY, W, 1);
+            ctx.restore();
+          } else if (currentPhase === 'phase1') {
+            // 通常の背景ティッカー
+            ctx.save();
+            const barH = 64;
+            const barY = H - barH - 6;
+            ctx.globalAlpha = 0.55;
+            ctx.fillStyle = 'rgba(20,24,40,0.65)';
+            ctx.fillRect(0, barY, W, barH);
+            ctx.globalAlpha = 1;
+            ctx.font = 'bold 32px system-ui, -apple-system, sans-serif';
+            ctx.fillStyle = '#a8b4ff';
+            // テキストのループ描画
+            const text = BG.tickerText;
+            const wText = ctx.measureText(text).width;
+            let tx = BG.tickerX % (wText || 1);
+            if (tx > 0) tx -= wText;
+            for (let i = -1; i < 3; i++) {
+              ctx.fillText(text, Math.floor(tx + i * wText + 12), Math.floor(barY + barH - 8));
+            }
+            // 上縁に薄い線
+            ctx.globalAlpha = 0.2;
+            ctx.fillStyle = '#b4c3ff';
+            ctx.fillRect(0, barY, W, 1);
+            ctx.restore();
+          }
+
+          // セーフ足場の残光
+          if (state.safeGlow && state.safeGlow.t > 0) {
+            const g = state.safeGlow;
+            const fade = Math.max(0, Math.min(1, g.t / 0.8));
+            ctx.save();
+            ctx.globalAlpha = 0.28 * fade;
+            const lg = ctx.createLinearGradient(g.x, g.y, g.x, g.y + g.h);
+            lg.addColorStop(0, 'rgba(204,0,0,0.9)');
+            lg.addColorStop(1, 'rgba(204,0,0,0)');
+            ctx.fillStyle = lg;
+            ctx.fillRect(g.x - 8, g.y - 4, g.w + 16, g.h + 8);
+            ctx.restore();
+          }
+
+          // 背景ポップアップ（浮遊テキスト）: フェーズ1のみ
+          if (currentPhase === 'phase1') {
+            for (const p of BG.popups) {
+              const fade = Math.max(0, 1 - (p.life / p.ttl));
+              ctx.save();
+              ctx.globalAlpha = 0.65 * fade;
+              ctx.fillStyle = '#2c3e66';
+              ctx.font = '600 36px system-ui, -apple-system, sans-serif';
+              ctx.fillText(p.text, p.x, p.y);
+              ctx.restore();
+            }
+          } else if (currentPhase === 'phase3' && BG.p3Active) {
+            // フェーズ3専用：淡い白で背景に溶け込む断片的な言葉
+            for (const it of BG.p3Items) {
+              const p = Math.max(0, Math.min(1, it.life / Math.max(0.001, it.ttl)));
+              const fadeIn = Math.max(0, Math.min(1, p / 0.4));   // 最初の40%でフェードイン
+              const fadeOut = Math.max(0, Math.min(1, (1 - p) / 0.4)); // 最後の40%でフェードアウト
+              const fade = Math.min(fadeIn, fadeOut);
+              ctx.save();
+              ctx.globalAlpha = 0.42 * fade; // 透明度を少し下げる
+              ctx.fillStyle = '#ffffff';
+              ctx.font = '600 30px system-ui, -apple-system, sans-serif';
+              ctx.fillText(it.text, it.x, it.y);
+              ctx.restore();
+            }
+          }
+
+          // フェーズ背景ティント
+          if (world.bgTint !== 'rgba(0,0,0,0.0)') {
+            ctx.save();
+            ctx.fillStyle = world.bgTint;
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+          }
+
+          // フェーズ変更演出
+          if (phaseTransition.active) {
+            const progress = phaseTransition.timer / phaseTransition.duration;
+            const flash = Math.sin(progress * Math.PI * 4) * (1 - progress);
+            ctx.save();
+            ctx.globalAlpha = Math.abs(flash) * 0.3;
+            ctx.fillStyle = world.hudColor;
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+          }
+
+          // FEVER画面ティント
+          if (state.fever) {
+            ctx.save();
+            const a = 0.14 + 0.06 * Math.sin(state.time * 8);
+            const tint = ctx.createLinearGradient(0, 0, 0, H);
+            tint.addColorStop(0, `rgba(255,216,120,${a})`);
+            tint.addColorStop(1, `rgba(120,255,200,${a*0.75})`);
+            ctx.fillStyle = tint;
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+          }
+
+          // Platforms
+          for (const p of platforms) {
+            if (p.safe) {
+              const alpha = (state.safeFading && state.safePlatformId === p.id) ? Math.max(0, 1 - state.safeFadeT) : 1;
+              ctx.save();
+              ctx.globalAlpha = alpha;
+              
+              // ベッド画像が読み込まれていれば画像を、そうでなければ赤いバー
+              // 赤いバー
+              ctx.fillStyle = '#cc0000';
+              ctx.fillRect(p.x, p.y, p.w, p.h);
+              
+              ctx.restore();
+              continue;
+            }
+            const c1 = world.platformColor1;
+            const c2 = world.platformColor2;
+            const g = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+            g.addColorStop(0, c1);
+            g.addColorStop(1, c2);
+            ctx.save();
+            if (p.fading) ctx.globalAlpha = Math.max(0, 1 - (p.fadeT || 0));
+            ctx.fillStyle = g;
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            // small glow
+            ctx.fillStyle = 'rgba(90,190,255,0.25)';
+            ctx.fillRect(p.x, p.y + p.h - 2, p.w, 2);
+            ctx.restore();
+          }
+
+          // Sugars (collectibles)
+          for (const s of sugars) {
+            const t = state.time;
+            const pulse = 0.6 + 0.4 * Math.sin(t * 6 + s.id);
+            const r = s.r * (0.9 + 0.15 * pulse);
+            const g = ctx.createRadialGradient(s.x, s.y, 1, s.x, s.y, r*2.2);
+            if (state.fever) {
+              g.addColorStop(0, 'rgba(255,255,200,0.95)');
+              g.addColorStop(1, 'rgba(180,255,200,0)');
+            } else {
+              g.addColorStop(0, 'rgba(255,240,180,0.9)');
+              g.addColorStop(1, 'rgba(255,180,80,0)');
+            }
+            ctx.fillStyle = g;
+            ctx.beginPath(); ctx.arc(s.x, s.y, r*1.6, 0, Math.PI*2); ctx.fill();
+            // core
+            ctx.fillStyle = state.fever ? '#ffff88' : '#ffd96a';
+            ctx.beginPath();
+            ctx.moveTo(s.x, s.y - r);
+            for (let i = 1; i < 6; i++) {
+              const ang = -Math.PI/2 + i * (Math.PI*2/6);
+              ctx.lineTo(s.x + Math.cos(ang) * r, s.y + Math.sin(ang) * r);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = state.fever ? 'rgba(220,255,200,0.9)' : 'rgba(255,220,120,0.8)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+
+          // Player: グルコースマン（浮遊感は弱め、接地感アップ）
+          const drawSink = 4; // 接地感のため全体を少し下げる
+          const hover = 1 + Math.sin(state.time * 5) * 0.8; // 浮遊幅を控えめに
+          const yAdj = player.y - hover + drawSink;
+          drawShadow(player.x, yAdj, player.w, player.h, anim);
+          // ずっと目は閉じたまま。ゲームオーバー時のみ開眼
+          const sleeping = !state.gameOver;
+          drawCharacter(player.x, yAdj, player.w, player.h, anim, sleeping);
+
+          // HUD（左上に小さく、フェーズ名＋スコアのみ）
+          hud.style.color = world.hudColor;
+          const phaseLabelsHUD2 = {
+            phase1: '現世のうつしよ ― 光の回廊',
+            phase2: '第二階層 ― 揺らぎの明晰夢',
+            phase3: '第三階層 ― 時間が伸びる世界',
+            final:  '夢の楽園 ― 夢の楽園'
+          };
+          hud.textContent = `フェーズ: ${phaseLabelsHUD2[currentPhase]||currentPhase} ／ スコア: ${state.score}`;
+
+          // ポップアップ描画
+          for (const p of popups) {
+            const alpha = Math.max(0, 1 - p.life / 1.0);
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = p.color || '#fff';
+            ctx.font = 'bold 36px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(p.text, p.x, p.y);
+            ctx.restore();
+          }
+          
+          // 背景ティント効果（外部phase-control.jsとの連携用）
+          if (typeof tintBackground === 'function') {
+            tintBackground(ctx, canvas.width, canvas.height);
+          }
+          
+          // 画面揺れの状態を復元
+          ctx.restore();
+        }
+
+        function drawCharacter(x, y, w, h, anim, sleeping=false) {
+          if (charSpriteReady) return drawSpriteMan(x, y, w, h, anim, sleeping);
+          return drawGlucoseMan(x, y, w, h, anim, sleeping);
+        }
+
+        function drawSpriteMan(x, y, w, h, anim, sleeping=false) {
+          ctx.save();
+          const cx = x + w/2;
+          const cy = y + h/2;
+          const sx = 1 - (anim.squash - 1) * 0.25;
+          const sy = anim.squash;
+          ctx.translate(cx, cy);
+          ctx.rotate(anim.tilt);
+          ctx.scale(sx, sy);
+          ctx.translate(-cx, -cy);
+          // 中央に画像をhに合わせて描画
+          const onSafeBar = (!state.activated && state.safePlatformId != null && player.groundId === state.safePlatformId);
+          const useSleep = (state.gameOver || onSafeBar) && charSpriteSleepReady;
+          const spr = useSleep ? charSpriteSleep : charSprite;
+          const iw = spr.naturalWidth || 1;
+          const ih = spr.naturalHeight || 1;
+          const scale = h / ih;
+          const dw = iw * scale;
+          const dh = h;
+          const dx = cx - dw/2;
+          const dy = y;
+          ctx.drawImage(spr, dx, dy, dw, dh);
+          ctx.restore();
+
+          // 眠り演出（鼻バブル）は重ねて表示
+          if (sleeping) {
+            const t = (state.time % 2.2) / 2.2;
+            const grow = t < 0.7 ? (t / 0.7) : (1 - (t - 0.7) / 0.3);
+            const r = 1.5 + 5.0 * Math.max(0, grow);
+            const nx = x + w*0.58 + 4 * grow;
+            const ny = y + h*0.28 - 10 * grow;
+            const a = 0.18 + 0.25 * Math.max(0, grow);
+            const bg = ctx.createRadialGradient(nx - r*0.4, ny - r*0.6, r*0.2, nx, ny, r);
+            bg.addColorStop(0, `rgba(255,255,255,${a})`);
+            bg.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = bg;
+            ctx.beginPath(); ctx.arc(nx, ny, r, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = `rgba(255,255,255,${a * 0.9})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(nx, ny, r, 0, Math.PI * 2); ctx.stroke();
+          }
+        }
+
+        function drawGlucoseMan(x, y, w, h, anim, sleeping=false) {
+          ctx.save();
+          const cx = x + w / 2;
+          const cyAll = y + h / 2;
+          // スクワッシュ＆回転
+          const sx = 1 - (anim.squash - 1) * 0.5;
+          const sy = anim.squash;
+          ctx.translate(cx, cyAll);
+          // 2段ジャンプ中はスピン回転を合成
+          const extraRot = (anim.spinTime > 0 ? anim.spin : 0);
+          ctx.rotate(anim.tilt + extraRot);
+          ctx.scale(sx, sy);
+          ctx.translate(-cx, -cyAll);
+
+          // 頭サイズ（デザイン比率で調整）
+          const hr = Math.min(h * design.headRatio, w * (design.headRatio * 1.8));
+          const headTop = y;
+          const cy = headTop + hr + 2; // 少し下げて配置
+          const hg = ctx.createRadialGradient(cx - hr*0.3, cy - hr*0.3, hr*0.4, cx, cy, hr);
+          hg.addColorStop(0, palette.head);
+          hg.addColorStop(1, palette.headShade);
+          ctx.fillStyle = hg;
+          ctx.beginPath();
+          ctx.arc(cx, cy, hr, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 頭の葉っぱ（緑）: 空中でゆらぐ
+          ctx.strokeStyle = palette.leafDark;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          const sway = Math.sin(anim.leafPhase) * (2 + anim.air * 3);
+          ctx.moveTo(cx, cy - hr + 2);
+          ctx.quadraticCurveTo(cx - 1 + sway * 0.2, cy - hr - 4, cx + sway * 0.2, cy - hr - 8);
+          ctx.stroke();
+          ctx.fillStyle = palette.leaf;
+          ctx.beginPath();
+          ctx.ellipse(cx - 3 + sway, cy - hr - 10, 5, 3, -0.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(cx + 3 + sway, cy - hr - 8, 5, 3, 0.6, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 目：通常は白目＋瞳、眠っている時は閉じ目ライン
+          // 目の大きさ・位置（デザイン比率に基づく）
+          const eyeOffX = Math.max(6, hr * design.eyeOffsetXR), eyeOffY = -2;
+          const eyeR = Math.max(7, hr * design.eyeRadiusRatio);
+          if (!sleeping) {
+            const look = Math.sin(state.time * 2) * 1.2;
+            // 左目
+            ctx.fillStyle = palette.eyeWhite;
+            ctx.beginPath(); ctx.arc(cx - eyeOffX, cy + eyeOffY, eyeR, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = palette.eyeIris;
+            ctx.beginPath(); ctx.arc(cx - eyeOffX + look * 0.6, cy + eyeOffY + 0.6, eyeR * 0.48, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = palette.eyeShine; ctx.beginPath(); ctx.arc(cx - eyeOffX - eyeR*0.22, cy + eyeOffY - eyeR*0.22, Math.max(1.4, eyeR*0.26), 0, Math.PI * 2); ctx.fill();
+            // 右目
+            ctx.fillStyle = palette.eyeWhite;
+            ctx.beginPath(); ctx.arc(cx + eyeOffX, cy + eyeOffY, eyeR, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = palette.eyeIris;
+            ctx.beginPath(); ctx.arc(cx + eyeOffX + look * 0.6, cy + eyeOffY + 0.6, eyeR * 0.48, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = palette.eyeShine; ctx.beginPath(); ctx.arc(cx + eyeOffX - eyeR*0.22, cy + eyeOffY - eyeR*0.22, Math.max(1.4, eyeR*0.26), 0, Math.PI * 2); ctx.fill();
+          } else {
+            // 閉じ目（微笑むような弧）
+            ctx.strokeStyle = 'rgba(20,16,32,0.9)';
+            ctx.lineWidth = Math.max(1.8, hr * 0.07);
+            ctx.beginPath(); ctx.arc(cx - eyeOffX, cy + eyeOffY + 1, eyeR * 0.9, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+            ctx.beginPath(); ctx.arc(cx + eyeOffX, cy + eyeOffY + 1, eyeR * 0.9, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+          }
+
+          // 眉毛
+          const browY = cy + eyeOffY - eyeR - Math.max(2, eyeR * 0.25);
+          const browLen = Math.max(6, eyeR * 1.2);
+          const browW = Math.max(2, eyeR * 0.35);
+          const browColor = palette.eyeIris;
+          const ang = sleeping ? 0.05 : 0.22; // 眠い時はフラット、通常は少しハの字
+          ctx.strokeStyle = browColor;
+          ctx.lineWidth = browW;
+          ctx.lineCap = 'round';
+          // 左眉
+          ctx.save();
+          ctx.translate(cx - eyeOffX, browY);
+          ctx.rotate(-ang);
+          ctx.beginPath(); ctx.moveTo(-browLen/2, 0); ctx.lineTo(browLen/2, 0); ctx.stroke();
+          ctx.restore();
+          // 右眉
+          ctx.save();
+          ctx.translate(cx + eyeOffX, browY);
+          ctx.rotate(ang);
+          ctx.beginPath(); ctx.moveTo(-browLen/2, 0); ctx.lineTo(browLen/2, 0); ctx.stroke();
+          ctx.restore();
+
+          // 口（穏やかなスマイル）
+          ctx.strokeStyle = 'rgba(20,16,32,0.9)';
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(cx + 2, cy + 6, 6, 0.2 * Math.PI, 0.8 * Math.PI);
+          ctx.stroke();
+
+          // 眠っている時の鼻バブル（透明の小さい風船）
+          if (sleeping) {
+            const t = (state.time % 2.2) / 2.2; // 0→1 の循環
+            const grow = t < 0.7 ? (t / 0.7) : (1 - (t - 0.7) / 0.3); // 0→1→0 の簡易波形
+            const r = 1.2 + 4.0 * Math.max(0, grow);
+            const dx = 3 + 4 * grow; // 右へ少し移動
+            const dy = -2 - 8 * grow; // 上へふわっと
+            const nx = cx + 4 + dx;
+            const ny = cy + 2 + dy;
+            const a = 0.15 + 0.25 * Math.max(0, grow);
+            // 透明感のある塗り＋縁
+            const bg = ctx.createRadialGradient(nx - r*0.4, ny - r*0.6, r*0.2, nx, ny, r);
+            bg.addColorStop(0, `rgba(255,255,255,${a})`);
+            bg.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = bg;
+            ctx.beginPath(); ctx.arc(nx, ny, r, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = `rgba(255,255,255,${a * 0.9})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(nx, ny, r, 0, Math.PI * 2); ctx.stroke();
+          }
+
+          // 服（上=明るめ、下=暗め）。下半身は今の倍の比率に拡大
+          const bodyY = y + 2 * hr;
+          const bodyH = Math.max(14, h - 2 * hr); // = 頭と同じ高さ（理想）
+          const bodyR = 7;
+          // 下半身の比率を従来の2倍に（上限0.9、下限0.1を確保）
+          const baseTopRatio = design.shirtRatio;
+          const bottomRatio = Math.min(0.9, (1 - baseTopRatio) * 2);
+          const topRatio = Math.max(0.1, 1 - bottomRatio);
+          // 上半身（シャツ：明るめ）
+          const topH = Math.floor(bodyH * topRatio);
+          const gTop = ctx.createLinearGradient(x, bodyY, x, bodyY + topH);
+          gTop.addColorStop(0, palette.shirtGreen);
+          gTop.addColorStop(1, palette.shirtGreenDark);
+          ctx.fillStyle = gTop;
+          roundRect(ctx, x, bodyY, w, topH, bodyR);
+          ctx.fill();
+          // 下半身（ズボン：暗め）
+          const bottomY = bodyY + topH - Math.min(bodyR, 6); // 少し重ねて角の段差を軽減
+          const bottomH = Math.floor(bodyH * bottomRatio) + Math.min(bodyR, 6);
+          const gBot = ctx.createLinearGradient(x, bottomY, x, bottomY + bottomH);
+          gBot.addColorStop(0, palette.pantsNavy);
+          gBot.addColorStop(1, palette.pantsNavyDark);
+          ctx.fillStyle = gBot;
+          roundRect(ctx, x, bottomY, w, bottomH, Math.max(3, bodyR - 2));
+          ctx.fill();
+          // 胸部イエローライン（アクセント）
+          ctx.fillStyle = palette.suitYellow;
+          ctx.fillRect(x + 4, bodyY + 6, w - 8, 3);
+          // 下端アクセントは削除（配色をシンプルに）
+
+          // 胸のGエンブレム（黄）
+          ctx.fillStyle = palette.suitYellow;
+          ctx.font = 'bold 11px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('G', cx, bodyY + bodyH * 0.55);
+
+          // 手足（簡易）：ポーズ変化
+          const isAir = anim.air > 0.1;
+          const goingUp = isAir && player.vy < -60;
+          const goingDown = isAir && player.vy > 120;
+          const armY = bodyY + 6;
+          const legY = bodyY + bodyH - 2;
+          const limbW = 3;
+          const limbLen = 8;
+          // 腕（上半身の色：緑）
+          ctx.fillStyle = palette.shirtGreenDark;
+          if (goingUp) {
+            // 両腕を上げる
+            ctx.fillRect(x - 2, armY - 8, limbW, limbLen + 6);
+            ctx.fillRect(x + w - limbW + 2, armY - 8, limbW, limbLen + 6);
+          } else if (goingDown) {
+            // 両腕をやや後ろに（下へ）
+            ctx.fillRect(x - 2, armY + 2, limbW, limbLen);
+            ctx.fillRect(x + w - limbW + 2, armY + 2, limbW, limbLen);
+          } else {
+            // ニュートラル（少し外）
+            ctx.fillRect(x - 2, armY, limbW, limbLen);
+            ctx.fillRect(x + w - limbW + 2, armY, limbW, limbLen);
+          }
+          // 脚（下半身の色：紺）＋ 足は丸
+          ctx.fillStyle = palette.pantsNavy;
+          let legLenL = limbLen, legLenR = limbLen;
+          let legYOffset = -1;
+          if (goingUp) { legYOffset = -4; legLenL = limbLen - 2; legLenR = limbLen - 2; }
+          else if (goingDown) { legYOffset = 0; legLenL = limbLen + 2; legLenR = limbLen + 2; }
+          // 細い脚
+          ctx.fillRect(cx - 6, legY + legYOffset, limbW, legLenL);
+          ctx.fillRect(cx + 3, legY + legYOffset, limbW, legLenR);
+          // 丸い足先
+          const footR = 4.5;
+          const fx1 = cx - 6 + limbW/2;
+          const fx2 = cx + 3 + limbW/2;
+          const fy = legY + legYOffset + Math.max(legLenL, legLenR) + 2 + (goingDown ? 2 : (goingUp ? -1 : 0));
+          ctx.beginPath(); ctx.arc(fx1, fy, footR, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(fx2, fy, footR, 0, Math.PI*2); ctx.fill();
+
+          // オーラ（軽さの表現）
+          const aura = ctx.createRadialGradient(cx, cy, 4, cx, cy, hr * 1.2);
+          aura.addColorStop(0, 'rgba(155,89,182,0.20)');
+          aura.addColorStop(1, 'rgba(155,89,182,0)');
+          ctx.fillStyle = aura;
+          ctx.beginPath(); ctx.arc(cx, cy, hr * 1.2, 0, Math.PI * 2); ctx.fill();
+
+          // フィーバー中の強化演出（発光・アウトライン）
+          if (state.fever) {
+            const t = state.time;
+            const pulse = 0.6 + 0.4 * Math.sin(t * 10);
+            // 追加オーラ（大きめ）
+            const aura2 = ctx.createRadialGradient(cx, cy, 6, cx, cy, hr * 1.8);
+            aura2.addColorStop(0, `rgba(255,230,120,${0.35 + 0.2*pulse})`);
+            aura2.addColorStop(1, 'rgba(255,230,120,0)');
+            ctx.fillStyle = aura2;
+            ctx.beginPath(); ctx.arc(cx, cy, hr * 1.8, 0, Math.PI * 2); ctx.fill();
+
+            // 頭部のゴールド縁取り
+            ctx.strokeStyle = `rgba(255,220,120,${0.8})`;
+            ctx.lineWidth = 2 + pulse;
+            ctx.beginPath(); ctx.arc(cx, cy, hr + 2, 0, Math.PI * 2); ctx.stroke();
+
+            // 胴体のゴールド縁取り
+            const bodyY = y + 2 * hr;
+            const bodyH = Math.max(14, h - 2 * hr);
+            const bodyR = 7;
+            ctx.lineWidth = 2;
+            roundRect(ctx, x - 1, bodyY - 1, w + 2, bodyH + 2, bodyR + 2);
+            ctx.stroke();
+          }
+
+          ctx.restore();
+        }
+
+        function drawShadow(x, y, w, h, anim) {
+          ctx.save();
+          const cx = x + w / 2;
+          const sy = y + h + 8;
+          const air = anim ? anim.air : 0;
+          const alpha = 0.25 * (1 - 0.6 * air);
+          const rx = Math.max(8, w * (0.7 - 0.25 * air));
+          const ry = 5 * (1 - 0.4 * air);
+          ctx.fillStyle = `rgba(0,0,0,${alpha.toFixed(3)})`;
+          ctx.beginPath();
+          ctx.ellipse(cx, sy, rx, Math.max(2, ry), 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        function roundRect(ctx, x, y, w, h, r) {
+          const rr = Math.min(r, w/2, h/2);
+          ctx.beginPath();
+          ctx.moveTo(x + rr, y);
+          ctx.arcTo(x + w, y, x + w, y + h, rr);
+          ctx.arcTo(x + w, y + h, x, y + h, rr);
+          ctx.arcTo(x, y + h, x, y, rr);
+          ctx.arcTo(x, y, x + w, y, rr);
+          ctx.closePath();
+        }
+
+        // Show intro overlay on load + ベスト表示の反映
+        overlay.style.display = 'flex';
+        try {
+          const bestLine = document.getElementById('bestLine');
+          if (bestLine) bestLine.textContent = `最高記録: ${state.best} m`;
+        } catch (_) {}
+      })();
+    </script>
+    <script src="phase-control.js"></script>
+    <script src="dev-tools.js"></script>
+  </body>
+</html>
