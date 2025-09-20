@@ -201,6 +201,10 @@
           safeGlow: null,
           // 一度スコア加算した足場IDの集合（再着地での多重加点防止）
           scoredPids: new Set(),
+          // 初着地グレース（開始/続き直後のすり抜け防止）
+          allowFirstLand: false,
+          firstLandingTimer: 0,
+          firstLandingWait: false,
         };
 
         // デザイン係数（参考画像に合わせやすく）
@@ -334,6 +338,8 @@
           p2Active: false, p2Messages: [], p2Index: 0, p2X: 0, p2Speed: 90, p2Gap: 40,
           // フェーズ3ポップアップ（夢の断片）
           p3Active: false, p3Items: [], p3SpawnTimer: 0,
+          // フェーズ3中央固定テキスト
+          p3CenterActive: false, p3CenterText: '', p3CenterTimer: 0, p3Cycle: 4.0,
         };
 
         // フェーズ専用リソース管理（特にphase1のDOM/タイマー/リスナを確実に破棄）
@@ -709,13 +715,15 @@
         const charSprite = new Image();
         let charSpriteReady = false;
         charSprite.onload = () => { charSpriteReady = true; };
-        charSprite.onerror = () => { charSpriteReady = false; };
-        charSprite.src = 'assets/character.png';
+        charSprite.onerror = () => { try { if (charSprite && charSprite.src && charSprite.src.indexOf(PLAYER_IMG) !== -1) { charSprite.src = PLAYER_FALLBACK; } } catch(_){} charSpriteReady = false; };
+        const PLAYER_IMG = 'assets/com.apple.Foundation.NSItemProvider.ran8JX-removebg-preview.png';
+        const PLAYER_FALLBACK = 'assets/character.png';
+        charSprite.src = PLAYER_IMG;
         const charSpriteSleep = new Image();
         let charSpriteSleepReady = false;
         charSpriteSleep.onload = () => { charSpriteSleepReady = true; };
-        charSpriteSleep.onerror = () => { charSpriteSleepReady = false; };
-        charSpriteSleep.src = 'assets/character.png';
+        charSpriteSleep.onerror = () => { try { if (charSpriteSleep && charSpriteSleep.src && charSpriteSleep.src.indexOf(PLAYER_IMG) !== -1) { charSpriteSleep.src = PLAYER_FALLBACK; } } catch(_){} charSpriteSleepReady = false; };
+        charSpriteSleep.src = PLAYER_IMG;
         
         // ベッドスプライト（赤いバー代替）
         const bedSprite = new Image();
@@ -809,6 +817,19 @@
         phaseBadge.textContent = '';
         phaseBadge.className = 'phase-badge';
         document.getElementById('wrap').appendChild(phaseBadge);
+
+        // フェーズ3中央固定テキスト（DOM）
+        const p3Whisper = document.createElement('div');
+        p3Whisper.id = 'p3Whisper';
+        p3Whisper.style.cssText = [
+          'position:absolute','left:50%','top:50%','transform:translate(-50%,-50%)',
+          'width:90%','max-width:900px','text-align:center','pointer-events:none',
+          'color:#ffffff','font-weight:700','letter-spacing:0.02em',
+          'font-size:clamp(18px,5vw,56px)','line-height:1.2','opacity:0',
+          'transition:opacity 0.6s ease-in-out','z-index:9999'
+        ].join(';');
+        document.getElementById('wrap').appendChild(p3Whisper);
+
         let phaseBadgeHideTimer = null;
         // 右上フェーズ名は非表示化するため更新処理は空にする
         function showPhaseBadge(_text) { /* no-op: hidden */ }
@@ -1005,6 +1026,15 @@
           bgTint: 'rgba(0,0,0,0.0)',
           hudColor: '#ffffff'
         };
+        
+        // 天蓋（画面上部の半円アーチ）設定（見やすさ強化）
+        const CANOPY = {
+          radiusScale: 0.62,
+          thickness: 28,       // 太めにして視認性アップ
+          bandFactor: 0.9,     // 線の周辺帯域（当たり判定）
+          apexLimitFactor: 0.22, // 上端付近のみに限定（Rの22%まで）
+          offsetY: 14          // 画面上から少し下げて描画（見やすさ）
+        };
 
         const player = {
           x: 0, y: 0,
@@ -1087,11 +1117,12 @@
           sugars = [];
           popups = [];
 
-          // スタート足場を中央に生成し、その上から開始
+          // スタート足場（赤バー）を画面最下部に固定し、その上から開始
           const startW = Math.min(Math.max(220, Math.floor(canvas.clientWidth * 0.6)), 280);
           const startX = Math.max(0, (canvas.clientWidth - startW) / 2);
-          const startY = 160;
-          const startPf = { id: platformIdCounter++, x: startX, y: startY, w: startW, h: world.platformH + 4, hue: 0, safe: true };
+          const startH = world.platformH + 4;
+          const startY = (canvas.clientHeight || window.innerHeight) - startH;
+          const startPf = { id: platformIdCounter++, x: startX, y: startY, w: startW, h: startH, hue: 0, safe: true };
           platforms.push(startPf);
           maybeAddSugar(startPf);
 
@@ -1116,15 +1147,15 @@
             showPhaseBadge('現世のうつしよ ― 光の回廊');
           }
 
-          // 画面下方向に最小限の足場のみ用意（最大数を抑える）
+          // 初期の通常バーは赤バーより上に生成（ジャンプ必須）
           const cfg0 = spawnConfigForPhase(currentPhase);
           const gapMin = Math.floor(world.platformGapMin * world.platformGapScale);
           const gapMax = Math.floor(world.platformGapMax * world.platformGapScale);
-          let y = startY + rand(gapMin, gapMax);
-          const initialCount = Math.min(2, Math.max(0, (cfg0.limit - 1)));
-          for (let i = 0; i < initialCount; i++) {
+          let y = startY - rand(gapMin, gapMax);
+          const initialCount = Math.min(3, Math.max(1, cfg0.limit));
+          for (let i = 0; i < initialCount && y > -200; i++) {
             platforms.push(makePlatform(y));
-            y += rand(gapMin, gapMax);
+            y -= rand(gapMin, gapMax);
           }
           pfSpawnTimer = 0;
           pfNextDelay = randf(cfg0.min, cfg0.max);
@@ -1168,6 +1199,7 @@
 
         function rand(a, b) { return Math.floor(a + Math.random() * (b - a)); }
         function randf(a, b) { return a + Math.random() * (b - a); }
+        function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
         // 検証用: X生成ヒストグラム（左右25%/中央50%）
         window.gmDebug = window.gmDebug || {};
         window.gmDebug.runSpawnHistogram = function(times = 1000) {
@@ -1298,6 +1330,10 @@
               platforms = (data.arrays&&data.arrays.platforms)||[];
               sugars = (data.arrays&&data.arrays.sugars)||[];
               overlay.style.display = 'none';
+              // 物理初期化と初着地グレース（続き直後）
+              player.vx = 0; player.vy = 0;
+              player.canCollide = true; player.dropThrough = false; player.collisionMask = 'default';
+              state.allowFirstLand = true; state.firstLandingTimer = 0.3; state.firstLandingWait = true;
             };
             const resumeBtn = document.getElementById('resumeFromSaveBtn');
             if (resumeBtn) resumeBtn.addEventListener('pointerdown', (ev) => { try { ev.preventDefault(); } catch(_){} doApply(); }, { passive: false });
@@ -1424,6 +1460,10 @@
           // 戻るジェスチャ対策：ゲーム中はダミー履歴を積む
           try { history.pushState({ gm: 'play' }, '', location.href); } catch(_){}
           reset();
+          // 物理初期化と初着地グレース
+          player.vx = 0; player.vy = 0;
+          player.canCollide = true; player.dropThrough = false; player.collisionMask = 'default';
+          state.allowFirstLand = true; state.firstLandingTimer = 0.3; state.firstLandingWait = true;
         }
 
         function pauseGame() {
@@ -1507,6 +1547,36 @@
         tryRestore();
 
         function update(dt) {
+          // 初着地グレース更新（開始/続き直後）
+          if (state.allowFirstLand) {
+            if (state.firstLandingWait) {
+              state.firstLandingWait = false;
+            } else {
+              if (platforms && platforms.length > 0 && !player.onGround) {
+                const footY = player.y + player.h;
+                let best = null, bestDy = 9999;
+                for (const pf of platforms) {
+                  if (pf.safe) continue;
+                  const hitW = pf.w * 0.8;
+                  const hitX = pf.x + (pf.w - hitW) * 0.5;
+                  const hitLeft = hitX, hitRight = hitX + hitW;
+                  const overlapX = (player.x + player.w) > (hitLeft - 1) && player.x < (hitRight + 1);
+                  if (!overlapX) continue;
+                  const dy = pf.y - footY;
+                  if (dy >= 0 && dy <= 10 && dy < bestDy) { bestDy = dy; best = pf; }
+                }
+                if (best) {
+                  player.y = best.y - player.h;
+                  player.vy = 0;
+                  player.onGround = true;
+                  player.groundId = best.id;
+                  state.allowFirstLand = false;
+                }
+              }
+            }
+            state.firstLandingTimer = Math.max(0, state.firstLandingTimer - dt);
+            if (state.firstLandingTimer === 0) state.allowFirstLand = false;
+          }
           state.time += dt;
           // オートセーブ（2.5秒ごと、プレイ中のみ）
           if (!window.__gmAutosave) window.__gmAutosave = { t: 0 };
@@ -1707,15 +1777,21 @@
             if (player.vy >= 0) {
               for (const pf of platforms) {
                 // 未アクティブ中に赤バー上にいる間は、通常足場との接触を無効化
-                if (!state.activated && player.groundId === state.safePlatformId && !pf.safe) continue;
+                if (!state.allowFirstLand && !state.activated && player.groundId === state.safePlatformId && !pf.safe) continue;
                 // 上端すり抜けは、アクティブ化前の初着地の妨げにならないよう未アクティブ中は無効化
                 if (state.activated && pf.y <= DETACH_AT_TOP && !pf.safe) continue; // 赤いバー以外は上端ですり抜け（アクティブ後のみ）
-                const overlapX = (player.x + player.w) > (pf.x - 1) && player.x < (pf.x + pf.w + 1);
+                // 縮小判定（幅80%、高さ50%）
+                const hitW = pf.w * 0.8;
+                const hitH = pf.h * 0.5;
+                const hitX = pf.x + (pf.w - hitW) * 0.5;
+                const hitY = pf.y + (pf.h - hitH) * 0.5;
+                const hitLeft = hitX, hitRight = hitX + hitW, hitTop = hitY;
+                const overlapX = (player.x + player.w) > (hitLeft - 1) && player.x < (hitRight + 1);
                 if (!overlapX) continue;
-                const crossTop = (prevBottom <= pf.y && currBottom >= pf.y);
-                const withinTol = (currBottom >= pf.y && currBottom <= pf.y + LAND_TOL);
+                const crossTop = (prevBottom <= hitTop && currBottom >= hitTop);
+                const withinTol = (currBottom >= hitTop && currBottom <= hitTop + LAND_TOL);
                 if (crossTop || withinTol) {
-                  player.y = pf.y - player.h;
+                  player.y = hitTop - player.h;
                   player.vy = 0;
                   player.onGround = true;
                   player.groundId = pf.id;
@@ -1740,6 +1816,13 @@
               }
             }
             remain -= step;
+          }
+          // 赤バー（最初の足場）から離れたら自動で消去を開始
+          if (state.safePlatformId != null && !state.leftSafe) {
+            if (player.groundId !== state.safePlatformId) {
+              state.leftSafe = true;
+              state.safeFading = true; // 既存のフェード処理で消す
+            }
           }
           if (landedThisFrame) {
             anim.landKick = 1; // 着地つぶれ
@@ -1807,9 +1890,19 @@
           // 地面にいる間は足場に粘着（微小誤差で抜けない）
           if (player.onGround && player.groundId != null) {
             const pf = platforms.find(p => p.id === player.groundId);
-            if (pf && pf.y > DETACH_AT_TOP && player.x + player.w > pf.x - 1 && player.x < pf.x + pf.w + 1) {
-              player.y = pf.y - player.h;
-              player.vy = 0;
+            if (pf) {
+              const hitW = pf.w * 0.8;
+              const hitH = pf.h * 0.5;
+              const hitX = pf.x + (pf.w - hitW) * 0.5;
+              const hitY = pf.y + (pf.h - hitH) * 0.5;
+              const hitLeft = hitX, hitRight = hitX + hitW, hitTop = hitY;
+              if (pf.y > DETACH_AT_TOP && (player.x + player.w) > (hitLeft - 1) && player.x < (hitRight + 1)) {
+                player.y = hitTop - player.h;
+                player.vy = 0;
+              } else {
+                player.onGround = false;
+                player.groundId = null;
+              }
             } else {
               player.onGround = false;
               player.groundId = null;
@@ -1859,6 +1952,7 @@
               platforms = platforms.filter(q => q.id !== p.id);
             }
           }
+          // 天蓋との接触は無効化（直線/ドームなし）
 
           // 足場の生成/掃除
           // 画面上に消えたものを削除。ただし現在接地中の足場は保持して勝手に消えないようにする
@@ -1978,6 +2072,8 @@
           }
         }
 
+// 天蓋当たり判定は廃止
+
         function gameOver() {
           state.running = false;
           state.gameOver = true;
@@ -2068,6 +2164,8 @@
             ctx.fillStyle = grad;
             ctx.fillRect(0, 0, W, H);
           }
+
+          // 天蓋描画は無効化（直線/ドームなし）
 
           // Subtle grid for depth
           ctx.save();
@@ -2367,6 +2465,22 @@
             ctx.lineWidth = 1;
             ctx.beginPath(); ctx.arc(nx, ny, r, 0, Math.PI * 2); ctx.stroke();
           }
+        }
+
+        function drawCanopy(ctx, W, H, t) {
+          const pal = (()=>{
+            if (currentPhase === 'phase1' || currentPhase === 'phase2') return { s:'rgba(160,210,255,0.95)' };
+            if (currentPhase === 'phase3') return { s:'rgba(130,90,180,0.95)' };
+            return { s:'rgba(255,220,160,0.92)' };
+          })();
+          const y = Math.max(1, CANOPY.thickness * 0.5); // 線の半分が見えるように内側へ
+          ctx.save();
+          ctx.lineWidth = CANOPY.thickness;
+          ctx.strokeStyle = pal.s;
+          ctx.shadowColor = pal.s; ctx.shadowBlur = 12;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.restore();
         }
 
         function drawGlucoseMan(x, y, w, h, anim, sleeping=false) {
