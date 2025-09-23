@@ -11,6 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="グルコースマンの落ちゲー" />
     <link rel="apple-touch-icon" href="assets/IMG_7890.png" sizes="180x180" />
+    <link rel="icon" href="favicon.ico" />
     <title>グルコースマンの落ちゲー</title>
     <style>
       html, body {
@@ -151,11 +152,13 @@
         const hud = document.getElementById('hud');
         const overlay = document.getElementById('overlay');
         const startBtn = document.getElementById('startBtn');
-        // DEVオプション（?dev[=任意] & phase=1|2|3|4）
+        // DEVオプション（?dev=1|2 & phase=1|2|3|4）
+        // window.DEV にも公開（本番挙動には影響なし）
         const DEV = (() => {
           try {
             const sp = new URL(location.href).searchParams;
-            const enabled = sp.has('dev');
+            const devParam = (sp.get('dev') || '').trim();
+            const enabled = devParam === '1' || devParam === '2';
             let phase = sp.get('phase');
             if (phase === '4') phase = 'final';
             if (phase !== '1' && phase !== '2' && phase !== '3' && phase !== 'final') phase = null;
@@ -163,9 +166,13 @@
             if (phase === '2') phase = 'phase2';
             if (phase === '3') phase = 'phase3';
             const obj = { enabled, dev: enabled, phase };
-            console.log('[DEV]', { devParam: sp.get('dev'), DEV: obj });
+            try { window.DEV = obj; } catch(_){}
+            console.log('[DEV]', { devParam, DEV: obj });
             return obj;
-          } catch (_) { return { enabled: false, dev: false, phase: null }; }
+          } catch (_) {
+            try { window.DEV = { enabled: false, dev: false, phase: null }; } catch(_){}
+            return { enabled: false, dev: false, phase: null };
+          }
         })();
 
         const state = {
@@ -303,19 +310,12 @@
           '速報：夢のジャングルにて"揺らぎの鼓動"を観測','現地リポート：森全体が脈動し、鼓動が大地を揺らす','Breaking Dream News：プレイヤーが未知の揺らぎに包まれる','夢世界調査局：第二フェーズ"揺らぎの鼓動"に突入','特報：鼓動の揺らぎが拡大、夢の奥地で異常事態を確認','緊急：揺らぎパターンの解析結果、予想を上回る複雑さ','現地映像：鼓動に合わせて光る植物群を発見','速報：揺らぎの鼓動が生物に与える影響を調査中','Breaking：夢ジャングルの奥深くから謎の音波を検出','特別レポート：揺らぎの鼓動、プレイヤーの心拍と同調か','緊急事態：鼓動の揺らぎが周辺エリアに拡散中','現場取材：揺らぎに包まれた生命体の生態変化を確認','速報：第二フェーズ突入により、夢世界に新たな現象','Breaking Dream Alert：揺らぎの鼓動、未知の周波数を記録'
         ];
         
-        // フェーズ3用：夢の中で直接響く断片的な日本語フレーズ
-        const PHASE3_PHRASES = [
-          '夢とはブロックチェーン──改ざんできない記憶の連鎖',
-          '囁きはハッシュされ、問いは承認を待っている',
-          '孤独なノードが、黄昏の森で夢を検証している',
-          '幻影はトランザクションのように流れ込む',
-          '夢の鼓動はブロックに刻まれ、永遠に失われない',
-          '分岐した夢がフォークし、別の現実へと伸びていく',
-          '沈黙の中で、誰かの夢がマイニングされている',
-          '答えは合意形成のように、すべての囁きの中で決まる',
-          'AI生成は夢と似ている',
-          'ここはデジタルワールドなのか？',
-          '夢とは集合意識のブロックチェーンにアクセスしている'
+        // フェーズ3用：新しいワード（フェーズ1と同様にランダムに浮遊）
+        const PHASE3_FLOAT_WORDS = [
+          'デジタルワールド','無意識の創造','夢は集合意識のブロックチェーン？','夢はAI生成と酷似',
+          '眠りの中でまた眠る','多層夢を操る','ドリームチェーン','無意識クラウド',
+          'ネストドリーム','メタスリープ','集合夢界','アルゴリズム幻','イマジネーション・ブロック',
+          '潜在意識サーバー','多層幻界','ドリームエンジン'
         ];
         // フェーズ2専用ニューステロップ文（指定の5文、順番にループ）
         const PHASE2_TICKER_LINES = [
@@ -332,13 +332,12 @@
         const BG = {
           tickerText: '', tickerX: 0, tickerSpeed: 60,
           popups: [], spawnTimer: 0,
-          // フェーズ3囁きシステム
+          // 旧フェーズ3囁きシステム（無効化）
           whisperActive: false, whisperText: '', whisperAlpha: 0, whisperTimer: 0, whisperIndex: 0, whisperTexts: [],
           // フェーズ2ニュース番組風テロップ
           p2Active: false, p2Messages: [], p2Index: 0, p2X: 0, p2Speed: 90, p2Gap: 40,
-          // フェーズ3ポップアップ（夢の断片）
+          // 旧フェーズ3ポップアップ・中央固定テキスト（無効化）
           p3Active: false, p3Items: [], p3SpawnTimer: 0,
-          // フェーズ3中央固定テキスト
           p3CenterActive: false, p3CenterText: '', p3CenterTimer: 0, p3Cycle: 4.0,
         };
 
@@ -394,10 +393,11 @@
           BG.p2X = 0;
           
           if (phase === 'phase3') {
-            // フェーズ3：夢の断片をランダムに浮かべる（日本語のみ）
-            BG.p3Active = true;
-            BG.p3Items = [];
-            BG.p3SpawnTimer = 0.6; // 最初の出現を少し遅らせる
+            // フェーズ3：フェーズ1と同じ浮遊テキスト方式（新ワード）
+            BG.popups = [];
+            BG.spawnTimer = 0.6;
+            BG.p3Active = false; BG.p3Items = [];
+            BG.p3CenterActive = false; BG.p3CenterText = ''; BG.p3CenterTimer = 0;
           } else if (phase === 'phase2') {
             // フェーズ2：ニュース番組風テロップを有効化（左→右）
             BG.p2Active = true;
@@ -422,7 +422,7 @@
         const PHASES = [
           { name: 'phase1', start: 0 },       // 〜 349.999s
           { name: 'phase2', start: 350 },     // 5:50〜
-          { name: 'phase3', start: 635 },     // 10:35〜（体感に合わせてさらに3秒前倒し）
+          { name: 'phase3', start: 630 },     // 10:30〜 に変更
           { name: 'final',  start: 955 }      // 15:55〜
         ];
 
@@ -472,6 +472,18 @@
 
         // フェーズごとの極端な難易度カーブ（スピード係数）
         const speedCtl = { base: 60, factor: 1.0 };
+        // フェーズごとの速度変動（平均1.0、±率内に収める）
+        // 速度変動（最終フェーズ後半のみ波打ち）
+        const FINAL_WAVE_AMP = 0.12; // ±12% 程度
+        const speedOsc = {
+          t: 0,
+          mod: 1,
+          raw: 1,
+          nextSpike: 0,
+          spike: { active: false, t: 0, dur: 0, str: 0.0, sign: 1 }
+        };
+        function phasePeriod(name){ return 5.0; }
+        function scheduleNextSpike(){ /* no-op (spike未使用) */ }
         let phaseTimer = 0; // 現フェーズ経過秒
         let phaseLenSec = 60; // 現フェーズ想定長（秒）
         let phaseSpeedProfile = { start: 1.0, mid: null, end: 1.5, split: 0.5 }; // フェーズの開始/中盤/終了係数、splitは前半割合
@@ -491,54 +503,71 @@
           if (t >= PHASES[1].start) return 'phase2';
           return 'phase1';
         }
+        // 外部ツールから参照できるように公開
+        try {
+          window.PHASES = PHASES;
+          window.resolvePhase = resolvePhase;
+        } catch(_) {}
+
+        // 即時フェーズ適用（BGM状態に依存しない）
+        function applyPhaseImmediate(name){
+          try {
+            const prev = currentPhase;
+            currentPhase = name;
+            applyDifficulty(DIFFICULTY[name] || DIFFICULTY.phase1);
+            if (typeof applyPhasePlayerTuning === 'function') applyPhasePlayerTuning(name);
+            // 背景/囁き等をリセット
+            BG.tickerText = ''; BG.tickerX = 0; BG.spawnTimer = 0;
+            BG.whisperActive = false; BG.whisperText = ''; BG.whisperAlpha = 0; BG.whisperTimer = 0;
+            BG.p2Active = false; BG.p2Messages = []; BG.p2Index = 0; BG.p2X = 0;
+            BG.p3Active = false; BG.p3Items = []; BG.p3SpawnTimer = 0;
+            // フェーズ1からの離脱時のクリーンアップ
+            if (prev === 'phase1' && name !== 'phase1') { try { PhaseCleanup.clearPhase1(); } catch(_){} }
+            initBG(name);
+            // タイマ類
+            phaseTimer = 0; phaseLenSec = phaseDurationFor(currentPhase);
+          } catch(_){}
+        }
 
         // DEV: フェーズジャンプ（G/H/J/K）。本編には影響しない開発用。
-        function jumpToPhase(n) {
+        async function jumpToPhase(n) {
           try {
             const idx = Math.max(1, Math.min(4, n)) - 1;
             const names = ['phase1', 'phase2', 'phase3', 'final'];
             const name = names[idx];
+            // DEV強制フラグを更新（updatePhaseでの強制にも使う）
+            try { DEV.phase = name; window.DEV && (window.DEV.phase = name); } catch(_){}
             if (bgmEl) {
-              // BGMの再生位置を該当フェーズ開始へ移動
-              bgmEl.currentTime = (PHASES[idx] && PHASES[idx].start) ? PHASES[idx].start + 0.2 : 0;
-              tryPlayBgm();
+              // BGMの再生位置を該当フェーズ開始へ移動（Chrome対策: 再生→シーク）
+              const target = (PHASES[idx] && PHASES[idx].start) ? (PHASES[idx].start + 0.2) : 0;
+              try { await seekBgmTo(target); } catch(_){}
             }
-            // ゲーム未開始時でも見た目の設定は合わせておく
-            if (!state.running) {
-              currentPhase = name;
-              applyDifficulty(DIFFICULTY[name] || DIFFICULTY.phase1);
-              if (typeof applyPhasePlayerTuning === 'function') applyPhasePlayerTuning(name);
-              phaseTimer = 0;
-              phaseLenSec = phaseDurationFor(name);
-            }
+            // 次回開始時のターゲット秒を記録
+            try { devBgmStartAtSec = (PHASES[idx] && PHASES[idx].start) ? (PHASES[idx].start + 0.2) : 0; } catch(_){}
+            // 即時適用（ゲーム未開始/一時停止/無音でも反映）
+            applyPhaseImmediate(name);
             console.log('[DEV] Jump phase ->', name);
           } catch (_) { /* noop */ }
         }
-        // フェーズ別にプレイヤーのサイズ（見た目＋当たり判定）とジャンプ力を調整
+        try { window.jumpToPhase = jumpToPhase; } catch(_){}
+        // プレイヤーのフェーズ別サイズ（見た目＋当たり判定）
+        // 仕様: 初期＝旧第3階層の大きさ。各フェーズで 100/90/80/70%（影も一致）、ジャンプ力や速度は変更しない。
+        const DESIGN_BASE_SCALE = 0.6; // 旧実装のphase3相当を基準にする
+        function phaseScale(phaseName){
+          if (phaseName === 'phase2') return 0.9;
+          if (phaseName === 'phase3') return 0.8;
+          if (phaseName === 'final')  return 0.7;
+          return 1.0; // phase1
+        }
+        function setPlayerScaleTarget(scale){
+          player.scaleStart = player.scale;
+          player.scaleTarget = scale;
+          player.scaleLerpT = 0;
+          player.scaleLerpDur = 1.0; // 1秒で補間
+        }
         function applyPhasePlayerTuning(phaseName) {
-          // サイズ: phase1=100%, phase2=80%, phase3=60%, final=50%
-          let scale = 1.0;
-          if (phaseName === 'phase2') scale = 0.8;
-          else if (phaseName === 'phase3') scale = 0.6;
-          else if (phaseName === 'final') scale = 0.5;
-          // 足元と中心が変わらないように補正してサイズ反映
-          const oldW = player.w, oldH = player.h;
-          const footY = player.y + oldH;
-          const cx = player.x + oldW / 2;
-          player.scale = scale;
-          player.w = Math.round((player.baseW || player.w) * scale);
-          player.h = Math.round((player.baseH || player.h) * scale);
-          player.y = footY - player.h;
-          player.x = Math.round(cx - player.w / 2);
-
-          // ジャンプ力: 小さいほど弱め（例: -15, -13, -11, -9に相当する割合）
-          // 基準を既存の初期値 520 とし、例の比率に近い係数で段階的に弱める
-          const base = 520;
-          let mult = 1.0;             // phase1 ≈ -15
-          if (phaseName === 'phase2') mult = 0.87;  // ≈ -13
-          else if (phaseName === 'phase3') mult = 0.73; // ≈ -11
-          else if (phaseName === 'final') mult = 0.60;  // ≈ -9
-          world.jumpSpeed = Math.max(120, Math.round(base * mult));
+          const target = DESIGN_BASE_SCALE * phaseScale(phaseName);
+          setPlayerScaleTarget(target);
         }
 
         function applyDifficulty(params) {
@@ -635,6 +664,47 @@
             }
           }
         };
+        // 開発用: BGMを確実に指定秒にシークするユーティリティ
+        async function seekBgmTo(sec){
+          try {
+            const a = document.getElementById('bgm');
+            if (!a) return;
+            // メタデータ待ち
+            if (a.readyState < 1) {
+              await new Promise(r=>{
+                const on = ()=>{ try{a.removeEventListener('loadedmetadata', on);}catch(_){} r(); };
+                try{ a.addEventListener('loadedmetadata', on, {once:true}); }catch(_){ r(); }
+              });
+            }
+            // 一度再生を開始してからシーク（Chrome対策）
+            try { await a.play(); } catch(_) {}
+            try {
+              if (typeof a.fastSeek === 'function') a.fastSeek(sec); else a.currentTime = sec;
+            } catch(_) {}
+            // seeked 完了待ち
+            await new Promise(r=>{
+              let done = false;
+              const t = setTimeout(()=>{ if (!done) r(); }, 250);
+              const onSeek = ()=>{ if (done) return; done = true; clearTimeout(t); try{ a.removeEventListener('seeked', onSeek);}catch(_){} r(); };
+              try { a.addEventListener('seeked', onSeek, { once:true }); } catch(_) { clearTimeout(t); r(); }
+            });
+            // 期待位置に到達していなければ Media Fragments でフォールバック
+            try {
+              const cur = Number(a.currentTime||0);
+              if (Math.abs(cur - sec) > 1.0) {
+                const u = new URL(a.currentSrc || a.src, location.href);
+                u.hash = `t=${Math.max(0, Math.floor(sec))}`;
+                const wasLoop = a.loop;
+                a.src = u.toString();
+                a.load();
+                a.loop = wasLoop;
+                try { await a.play(); } catch(_) {}
+              }
+            } catch(_) {}
+            // 直後にpauseに戻す（必要なら）
+            if (!state.running) try { a.pause(); } catch(_) {}
+          } catch(_) {}
+        }
 
         const sfxPlay = {
           start: () => audio.seq([
@@ -675,6 +745,8 @@
             ['beep', 1400, 0.06, 'square', 0.03],
           ]),
         };
+
+        // （フェーズ4のエンドロール機能は削除）
 
         // 初回操作でオーディオを解禁
         const bgmEl = document.getElementById('bgm');
@@ -739,13 +811,55 @@
           if (p && p.catch) p.catch(() => {});
         }
         if (bgmEl) { bgmEl.volume = 0.35; }
+        // DEV時はメタデータ取得を優先（シークの即応性を高める）
+        try { if (DEV && DEV.dev && bgmEl) bgmEl.preload = 'auto'; } catch(_){}
 
         // BGM制御（フェード・停止・再生位置管理・デバウンス）
+        // DEV: 次回再生開始位置（フェーズジャンプが指定したときに使用）
+        let devBgmStartAtSec = null;
         const BGM = {
           get el(){ return bgmEl; },
           targetVol: (bgmEl ? bgmEl.volume : 0.35),
           fadeRaf: null,
           gameOverHandled: false,
+          fadeFromCurrent(durSec = 0.8){
+            if (!this.el || !bgmEnabled) return;
+            this.clearFade();
+            this.setVolume(0);
+            const start = performance.now();
+            const endVol = this.targetVol;
+            const step = (now) => {
+              const p = Math.min(1, (now - start) / (durSec * 1000));
+              this.setVolume(endVol * p);
+              if (p < 1) this.fadeRaf = requestAnimationFrame(step); else this.fadeRaf = null;
+            };
+            this.fadeRaf = requestAnimationFrame(step);
+          },
+          // 指定秒へ安全にシーク（loadedmetadata/seeked待ち）
+          seekTo(targetSec, autoplay = true) {
+            if (!this.el) return;
+            this.clearFade();
+            const el = this.el;
+            const target = Math.max(0, Number(targetSec) || 0);
+            const setAndMaybePlay = () => {
+              try {
+                if (typeof el.fastSeek === 'function') el.fastSeek(target);
+                else el.currentTime = target;
+              } catch(_) {}
+              // ユーザー操作中のキー押下で呼ばれるため、再生を明示再開
+              if (autoplay) tryPlayBgm();
+            };
+            // メタデータが無い場合のみ load して loadedmetadata 後に実行
+            if (el.readyState === 0 || !isFinite(el.duration || NaN)) {
+              try {
+                const onMeta = () => { try { el.removeEventListener('loadedmetadata', onMeta); } catch(_){} setAndMaybePlay(); };
+                el.addEventListener('loadedmetadata', onMeta, { once: true });
+              } catch(_) {}
+              try { el.preload = 'auto'; el.load(); } catch(_){}
+            } else {
+              setAndMaybePlay();
+            }
+          },
           clearFade() {
             if (this.fadeRaf != null) {
               try { cancelAnimationFrame(this.fadeRaf); } catch(_){}
@@ -759,28 +873,47 @@
             try { this.el.pause(); } catch(_){}
             try { this.el.currentTime = 0; } catch(_){}
           },
-          fadeInFromZero(durSec = 0.8) {
+          fadeInFromZero(durSec = 0.8, targetTime = 0) {
             if (!this.el || !bgmEnabled) return;
             this.clearFade();
             // 再生は必ず stop→seek0→play の順
             try { this.el.pause(); } catch(_){}
-            try { this.el.currentTime = 0; } catch(_){}
-            this.setVolume(0);
-            tryPlayBgm();
-            const start = performance.now();
-            const startVol = 0;
-            const endVol = this.targetVol;
-            const step = (now) => {
-              const p = Math.min(1, (now - start) / (durSec * 1000));
-              this.setVolume(startVol + (endVol - startVol) * p);
-              if (p < 1) {
-                this.fadeRaf = requestAnimationFrame(step);
-              } else {
-                this.fadeRaf = null;
-                this.setVolume(endVol);
-              }
+            // メタデータ未読込でも確実にターゲット時刻へ
+            const tgt = Math.max(0, targetTime||0);
+            const setTime = () => { try { this.el.currentTime = tgt; } catch(_){} };
+            const beginFade = () => {
+              const start = performance.now();
+              const startVol = 0;
+              const endVol = this.targetVol;
+              const step = (now) => {
+                const p = Math.min(1, (now - start) / (durSec * 1000));
+                this.setVolume(startVol + (endVol - startVol) * p);
+                if (p < 1) {
+                  this.fadeRaf = requestAnimationFrame(step);
+                } else {
+                  this.fadeRaf = null;
+                  this.setVolume(endVol);
+                }
+              };
+              this.fadeRaf = requestAnimationFrame(step);
             };
-            this.fadeRaf = requestAnimationFrame(step);
+            if (tgt > 0 && !(this.el.readyState >= 1 && isFinite(this.el.duration || NaN))) {
+              const onMeta = () => { try { setTime(); } finally { try { this.el.removeEventListener('loadedmetadata', onMeta); } catch(_){} } };
+              try { this.el.addEventListener('loadedmetadata', onMeta, { once: true }); } catch(_){}
+              try { this.el.load(); } catch(_){}
+              // 再生・フェードはメタデータ読込後に実行
+              const onCanPlay = () => {
+                try { this.el.removeEventListener('canplay', onCanPlay); } catch(_){}
+                tryPlayBgm();
+                beginFade();
+              };
+              try { this.el.addEventListener('canplay', onCanPlay, { once: true }); } catch(_){}
+            } else {
+              setTime();
+              this.setVolume(0);
+              tryPlayBgm();
+              beginFade();
+            }
           },
           onGameOver() {
             if (this.gameOverHandled) return; // 多重発火防止
@@ -788,7 +921,7 @@
             // 要件順序：停止→位置0→必要なら再開（今回は停止のまま）
             this.stopAndReset();
           },
-          onStartPlay() {
+          async onStartPlay() {
             // リトライ開始時：曲頭からフェードインして再生
             this.clearFade();
             this.gameOverHandled = false;
@@ -797,7 +930,20 @@
               this.stopAndReset();
               return;
             }
-            this.fadeInFromZero(0.8);
+            // DEVモード中は選択フェーズ/直前のジャンプ指定時刻から再生
+            let target = (typeof devBgmStartAtSec === 'number') ? devBgmStartAtSec : 0;
+            try {
+              if (!target && window.DEV && window.DEV.dev && window.DEV.phase && Array.isArray(PHASES)) {
+                const p = PHASES.find(x => x && x.name === window.DEV.phase);
+                if (p && typeof p.start === 'number') target = (p.start || 0) + 0.2;
+              }
+            } catch(_){}
+            if (target > 0) {
+              await seekBgmTo(target);
+              this.fadeFromCurrent(0.8);
+            } else {
+              this.fadeInFromZero(0.8, 0);
+            }
           },
           resetDebounce(){ this.gameOverHandled = false; }
         };
@@ -818,17 +964,7 @@
         phaseBadge.className = 'phase-badge';
         document.getElementById('wrap').appendChild(phaseBadge);
 
-        // フェーズ3中央固定テキスト（DOM）
-        const p3Whisper = document.createElement('div');
-        p3Whisper.id = 'p3Whisper';
-        p3Whisper.style.cssText = [
-          'position:absolute','left:50%','top:50%','transform:translate(-50%,-50%)',
-          'width:90%','max-width:900px','text-align:center','pointer-events:none',
-          'color:#ffffff','font-weight:700','letter-spacing:0.02em',
-          'font-size:clamp(18px,5vw,56px)','line-height:1.2','opacity:0',
-          'transition:opacity 0.6s ease-in-out','z-index:9999'
-        ].join(';');
-        document.getElementById('wrap').appendChild(p3Whisper);
+        // フェーズ3の中央固定テキスト・囁きは削除（使用しない）
 
         let phaseBadgeHideTimer = null;
         // 右上フェーズ名は非表示化するため更新処理は空にする
@@ -851,6 +987,8 @@
             currentPhase = phase;
             applyDifficulty(DIFFICULTY[phase]);
             applyPhasePlayerTuning(currentPhase);
+            // 速度変動リセット（位相は継続、スパイクのみリスケジュール）
+            scheduleNextSpike();
             
             // 背景テキスト/囁きを一度リセットしてから、フェーズに応じて再初期化
             BG.tickerText = '';
@@ -872,19 +1010,24 @@
             }
             initBG(phase);
 
+            // （フェーズ4のエンドロール呼び出しは削除）
+
             // フェーズ切替時：スピード係数をリセットし、フェーズ中に極端なカーブで加速
             phaseTimer = 0;
             phaseLenSec = phaseDurationFor(currentPhase);
             if (currentPhase === 'phase1') {
+              // 線形：ゆっくり→少し速く
               phaseSpeedProfile = { start: 1.0, mid: null, end: 1.5, split: 0.5 };
             } else if (currentPhase === 'phase2') {
-              // 序盤は現状維持（1.5付近）→中盤1.8→終盤2.5へ段階的に上昇
-              phaseSpeedProfile = { start: 1.5, mid: 1.8, end: 2.5, split: 0.6 };
+              // 線形：開始はゆっくり→終盤へ直線的に加速
+              phaseSpeedProfile = { start: 1.5, mid: null, end: 2.5, split: 0.5 };
             } else if (currentPhase === 'phase3') {
+              // 線形：開始はややゆっくり→高めへ直線的に加速
               const start = 1.0 + Math.random() * 0.2; // 1.0〜1.2
               const end = 2.8 + Math.random() * 0.2;   // 2.8〜3.0
-              phaseSpeedProfile = { start, mid: 1.8, end, split: 0.5 };
+              phaseSpeedProfile = { start, mid: null, end, split: 0.5 };
             } else if (currentPhase === 'final') {
+              // 前半は加速、後半は最大帯で維持（波打ちは別処理）
               phaseSpeedProfile = { start: 2.5, mid: null, end: 3.0, split: 0.5 };
             }
             speedCtl.factor = phaseSpeedProfile.start;
@@ -1041,6 +1184,10 @@
           baseW: 84, baseH: 132,
           w: 84, h: 132,
           scale: 1.0,
+          scaleStart: 1.0,
+          scaleTarget: 1.0,
+          scaleLerpT: 0,
+          scaleLerpDur: 1.0,
           vx: 0, vy: 0,
           speed: 280, // horizontal
           onGround: false,
@@ -1140,6 +1287,21 @@
           currentPhase = 'phase1';
           applyDifficulty(DIFFICULTY.phase1);
           applyPhasePlayerTuning(currentPhase);
+          // 初期は即時に目標スケールへ反映（開始時は補間しない）
+          (function(){
+            const target = DESIGN_BASE_SCALE * phaseScale(currentPhase);
+            const oldW = player.w, oldH = player.h;
+            const footY = player.y + oldH;
+            const cx = player.x + oldW / 2;
+            player.scale = target;
+            player.scaleStart = target;
+            player.scaleTarget = target;
+            player.scaleLerpT = player.scaleLerpDur;
+            player.w = Math.round(player.baseW * target);
+            player.h = Math.round(player.baseH * target);
+            player.y = footY - player.h;
+            player.x = Math.round(cx - player.w / 2);
+          })();
           phaseTransition.active = false;
           // フェーズ表示（フェーズ中も常時表示、フェードインのみ）
           if (phaseBadge) {
@@ -1192,7 +1354,7 @@
           }
           lastSpawnEdge = isEdgeX(x);
 
-          const pf = { id: platformIdCounter++, x, y, w, h: world.platformH, hue: Math.random() * 360, stayT: 0, fading: false, fadeT: 0 };
+          const pf = { id: platformIdCounter++, x, y, w, h: world.platformH, hue: Math.random() * 360, stayT: 0, fading: false, fadeT: 0, decayT: null };
           maybeAddSugar(pf);
           return pf;
         }
@@ -1360,15 +1522,7 @@
         window.addEventListener('keydown', (e) => {
           if (e.repeat) return;
           // DEV: フェーズジャンプ（G/H/J/K）。大文字小文字どちらでも可。
-          try {
-            const k = (e.key || '').toLowerCase();
-            if (DEV && DEV.dev) {
-              if (k === 'g') jumpToPhase(1);
-              else if (k === 'h') jumpToPhase(2);
-              else if (k === 'j') jumpToPhase(3);
-              else if (k === 'k') jumpToPhase(4);
-            }
-          } catch(_){}
+          // フェーズジャンプは dev-tools.js 側でのみ処理（重複を避ける）
           if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.add('left');
           if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.add('right');
           if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
@@ -1547,6 +1701,23 @@
         tryRestore();
 
         function update(dt) {
+          // プレイヤースケール補間（足元と中心を維持して見た目と当たり判定を一致）
+          if (player.scale !== player.scaleTarget) {
+            player.scaleLerpT = Math.min(player.scaleLerpDur, player.scaleLerpT + dt);
+            const tt = (player.scaleLerpDur > 0) ? (player.scaleLerpT / player.scaleLerpDur) : 1.0;
+            const t = easeInOut(Math.max(0, Math.min(1, tt)));
+            const newScale = lerp(player.scaleStart, player.scaleTarget, t);
+            if (Math.abs(newScale - player.scale) > 1e-4) {
+              const oldW = player.w, oldH = player.h;
+              const footY = player.y + oldH;
+              const cx = player.x + oldW / 2;
+              player.scale = newScale;
+              player.w = Math.round((player.baseW) * newScale);
+              player.h = Math.round((player.baseH) * newScale);
+              player.y = footY - player.h;
+              player.x = Math.round(cx - player.w / 2);
+            }
+          }
           // 初着地グレース更新（開始/続き直後）
           if (state.allowFirstLand) {
             if (state.firstLandingWait) {
@@ -1621,26 +1792,35 @@
             }
           }
           
-          // 難易度制御：フェーズ中に極端なカーブで加速
+          // 難易度制御：フェーズ中のベース速度
           phaseTimer += dt;
           const p = clamp01(phaseTimer / Math.max(0.001, phaseLenSec));
           let f = phaseSpeedProfile.start;
-          if (phaseSpeedProfile.mid != null) {
-            // 2段階カーブ：前半は開始→中盤、後半は中盤→終了
-            const split = Math.max(0.05, Math.min(0.95, phaseSpeedProfile.split || 0.5));
-            if (p < split) {
-              const q = easeInOut(p / split);
-              f = lerp(phaseSpeedProfile.start, phaseSpeedProfile.mid, q);
-            } else {
-              const q = easeInOut((p - split) / Math.max(0.001, 1 - split));
-              f = lerp(phaseSpeedProfile.mid, phaseSpeedProfile.end, q);
-            }
-          } else {
-            // 単純に開始→終了へ緩やかに加速
-            f = lerp(phaseSpeedProfile.start, phaseSpeedProfile.end, easeInOut(p));
+          // フェーズ1〜3：直線的に開始→終了へ（波や上下動なし）
+          // フェーズ4：前半は加速、後半は最大帯に固定
+          const linear = lerp(phaseSpeedProfile.start, phaseSpeedProfile.end, p);
+          f = linear;
+          if (currentPhase === 'final' && p >= 0.5) {
+            f = phaseSpeedProfile.end;
           }
           speedCtl.factor = f;
-          world.scrollSpeed = speedCtl.base * speedCtl.factor;
+          // 速度変動：フェーズ4後半のみサイン波で波打つ（±FINAL_WAVE_AMP）。他フェーズは変動なし。
+          let mod = 1.0;
+          if (currentPhase === 'final' && p >= 0.5) {
+            speedOsc.t += dt;
+            const per = Math.max(0.001, phasePeriod('final'));
+            const sine = Math.sin((speedOsc.t / per) * Math.PI * 2);
+            const raw = 1 + FINAL_WAVE_AMP * sine;
+            const smoothRate = 6; // 時定数 ≈ 1/6s
+            speedOsc.raw = raw;
+            speedOsc.mod += (raw - speedOsc.mod) * Math.min(1, dt * smoothRate);
+            mod = speedOsc.mod;
+          } else {
+            // 変動なし
+            speedOsc.mod += (1 - speedOsc.mod) * Math.min(1, dt * 6);
+            mod = 1.0;
+          }
+          world.scrollSpeed = speedCtl.base * speedCtl.factor * mod;
           // 深度は常時進行（赤いバー上でも進む）
           state.depth += world.scrollSpeed * dt * 0.12; // px -> meters scale
           // 観賞モード（未アクティブのまま）で一定深度に到達したらエンディング
@@ -1648,8 +1828,8 @@
             gameOver();
           }
 
-          // 背景ティッカーとポップアップ更新（UIより背面）: フェーズ1限定
-          if (currentPhase === 'phase1') {
+          // 背景ティッカーとポップアップ更新（UIより背面）: フェーズ1/3
+          if (currentPhase === 'phase1' || currentPhase === 'phase3') {
             BG.tickerX -= BG.tickerSpeed * dt;
           }
           // フェーズ2テロップのスクロール更新（左→右）
@@ -1657,42 +1837,13 @@
             BG.p2X += BG.p2Speed * dt;
           }
           
-          // フェーズ3：夢の断片ポップアップ更新（日本語フレーズ）— フェードをゆっくりに
-          if (currentPhase === 'phase3' && BG.p3Active) {
-            BG.p3SpawnTimer -= dt;
-            if (BG.p3SpawnTimer <= 0) {
-              BG.p3SpawnTimer = 1.8 + Math.random() * 2.0; // ややゆっくり出現
-              const W = canvas.clientWidth, H = canvas.clientHeight;
-              const text = PHASE3_PHRASES[(Math.random() * PHASE3_PHRASES.length) | 0];
-              BG.p3Items.push({
-                text,
-                x: Math.random() * (W * 0.8) + W * 0.1,
-                y: Math.random() * (H * 0.65) + H * 0.12,
-                vx: (Math.random() * 8 - 4),
-                vy: (-6 - Math.random() * 6),
-                life: 0,
-                ttl: 4.5 + Math.random() * 2.5 // 表示時間を長めに
-              });
-            }
-            for (const it of BG.p3Items) {
-              it.life += dt;
-              it.x += it.vx * dt;
-              it.y += it.vy * dt;
-              // ゆっくり減速し、少し上昇
-              it.vx *= (1 - Math.min(1, dt * 0.6));
-              it.vy *= (1 - Math.min(1, dt * 0.4));
-            }
-            BG.p3Items = BG.p3Items.filter(it => it.life < it.ttl);
-          } else {
-            // フェーズ3以外では片付け
-            BG.p3Items = [];
-          }
-          if (currentPhase === 'phase1') {
+          if (currentPhase === 'phase1' || currentPhase === 'phase3') {
             // ポップアップ生成（約2.2～4.0秒間隔）
             BG.spawnTimer -= dt;
             if (BG.spawnTimer <= 0) {
               BG.spawnTimer = 2.2 + Math.random() * 1.8;
-              const text = POPUP_WORDS[(Math.random() * POPUP_WORDS.length) | 0];
+              const sourceList = (currentPhase === 'phase3') ? PHASE3_FLOAT_WORDS : POPUP_WORDS;
+              const text = sourceList[(Math.random() * sourceList.length) | 0];
               const W = canvas.clientWidth, H = canvas.clientHeight;
               BG.popups.push({
                 x: Math.random() * W,
@@ -1712,7 +1863,7 @@
             }
             BG.popups = BG.popups.filter(p => p.life < p.ttl);
           } else {
-            // フェーズ1以外では即時クリア（再出現防止）
+            // フェーズ1/3以外では即時クリア（再出現防止）
             BG.popups.length = 0;
           }
 
@@ -1830,6 +1981,8 @@
             player.airJumpsLeft = state.fever ? 1 : 0;
             const gpf = platforms.find(p => p.id === player.groundId);
             if (gpf) {
+              // 通常足場は着地から3秒で消える（最後0.5秒は点滅）
+              if (!gpf.safe && gpf.decayT == null) gpf.decayT = 0;
               let firstOnThis = false;
               // 未アクティブ → 非セーフ初着地でアクティブ化、赤バーをフェードアウト
               if (!state.activated && !gpf.safe) {
@@ -1927,27 +2080,14 @@
           if (state.safeGlow) state.safeGlow.y -= scroll;
           if (state.safeGlow) state.safeGlow.y -= scroll;
 
-          // 同一足場に立ち続けるとフェードアウト（例: 5秒で消滅）
-          const STAND_LIMIT = 5.0;
-          const FADE_DURATION = 1.0;
-          if (player.onGround && player.groundId != null) {
-            const pf = platforms.find(p => p.id === player.groundId);
-            if (pf && !pf.safe) {
-              pf.stayT = (pf.stayT || 0) + dt;
-              if (!pf.fading && pf.stayT >= STAND_LIMIT) {
-                pf.fading = true; pf.fadeT = 0;
-              }
-            }
-          }
-          // フェード進行と消滅処理（安全バーは既存ロジックで処理）
+          // 通常足場の消滅タイマー：着地から3秒で消える（直前0.5秒は点滅）
+          const DECAY_LIMIT = 3.0;
           for (const p of platforms) {
-            if (!p.safe && p.fading) {
-              p.fadeT = Math.min(1, p.fadeT + dt / Math.max(0.001, FADE_DURATION));
-            }
+            if (!p.safe && p.decayT != null) p.decayT += dt;
           }
-          // フェード終了で削除（プレイヤーが上にいれば落下させる）
+          // 消滅処理
           for (const p of platforms.slice()) {
-            if (!p.safe && p.fading && p.fadeT >= 1) {
+            if (!p.safe && p.decayT != null && p.decayT >= DECAY_LIMIT) {
               if (player.groundId === p.id) { player.onGround = false; player.groundId = null; }
               platforms = platforms.filter(q => q.id !== p.id);
             }
@@ -2260,29 +2400,22 @@
             ctx.restore();
           }
 
-          // 背景ポップアップ（浮遊テキスト）: フェーズ1のみ
-          if (currentPhase === 'phase1') {
+          // 背景ポップアップ（浮遊テキスト）: フェーズ1/3
+          if (currentPhase === 'phase1' || currentPhase === 'phase3') {
             for (const p of BG.popups) {
               const fade = Math.max(0, 1 - (p.life / p.ttl));
               ctx.save();
-              ctx.globalAlpha = 0.65 * fade;
-              ctx.fillStyle = '#2c3e66';
+              if (currentPhase === 'phase3') {
+                // 可読性改善：淡い白＋低めの透明度（かすかに読める程度）
+                ctx.globalAlpha = (0.2 + 0.1 * 0.5) * fade; // ≈ 0.25 * fade
+                ctx.fillStyle = '#ffffff';
+              } else {
+                // フェーズ1は従来通り
+                ctx.globalAlpha = 0.65 * fade;
+                ctx.fillStyle = '#2c3e66';
+              }
               ctx.font = '600 36px system-ui, -apple-system, sans-serif';
               ctx.fillText(p.text, p.x, p.y);
-              ctx.restore();
-            }
-          } else if (currentPhase === 'phase3' && BG.p3Active) {
-            // フェーズ3専用：淡い白で背景に溶け込む断片的な言葉
-            for (const it of BG.p3Items) {
-              const p = Math.max(0, Math.min(1, it.life / Math.max(0.001, it.ttl)));
-              const fadeIn = Math.max(0, Math.min(1, p / 0.4));   // 最初の40%でフェードイン
-              const fadeOut = Math.max(0, Math.min(1, (1 - p) / 0.4)); // 最後の40%でフェードアウト
-              const fade = Math.min(fadeIn, fadeOut);
-              ctx.save();
-              ctx.globalAlpha = 0.42 * fade; // 透明度を少し下げる
-              ctx.fillStyle = '#ffffff';
-              ctx.font = '600 30px system-ui, -apple-system, sans-serif';
-              ctx.fillText(it.text, it.x, it.y);
               ctx.restore();
             }
           }
@@ -2333,13 +2466,20 @@
               ctx.restore();
               continue;
             }
+            // 通常足場の点滅（消滅直前0.5秒）
+            const blink = (p.decayT != null && p.decayT >= (3.0 - 0.5));
+            if (blink) {
+              const phase = p.decayT - (3.0 - 0.5);
+              const visible = (Math.floor((phase) / 0.1) % 2) === 0; // 0.1秒ごとに交互
+              if (!visible) continue; // 非表示フレーム
+            }
             const c1 = world.platformColor1;
             const c2 = world.platformColor2;
             const g = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
             g.addColorStop(0, c1);
             g.addColorStop(1, c2);
             ctx.save();
-            if (p.fading) ctx.globalAlpha = Math.max(0, 1 - (p.fadeT || 0));
+            // 旧フェードロジックは使用しない
             ctx.fillStyle = g;
             ctx.fillRect(p.x, p.y, p.w, p.h);
             // small glow
@@ -2750,6 +2890,33 @@
     <!-- Optional external phase controller: disabled to avoid 404
     <script src="scripts/phase-control.js"></script>
     -->
-    <script src="dev-tools.js"></script>
+    <!-- 開発用ツール: ?dev=1 で有効化 -->
+    <script src="scripts/dev-tools.js"></script>
+    <script>
+      // 予備ローダ: dev-toolsの404時にフォールバック読込
+      (function(){
+        try {
+          const sp = new URL(location.href).searchParams;
+          const devParam = (sp.get('dev')||'').trim();
+          const devOn = devParam === '1' || devParam === '2';
+          if (!devOn) return;
+          setTimeout(function(){
+            if (window.__DEV_TOOLS_LOADED) return;
+            console.warn('[DEV-TOOLS] static include missing or 404, loading dynamically...');
+            const s = document.createElement('script');
+            s.src = 'scripts/dev-tools.js';
+            s.async = true;
+            s.onerror = function(){
+              console.warn('[DEV-TOOLS] scripts/dev-tools.js 404, fallback to scripts/dev-tools-simple.js');
+              const s2 = document.createElement('script');
+              s2.src = 'scripts/dev-tools-simple.js';
+              s2.async = true;
+              document.body.appendChild(s2);
+            };
+            document.body.appendChild(s);
+          }, 80);
+        } catch(_) {}
+      })();
+    </script>
   </body>
 </html>
