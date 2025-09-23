@@ -317,13 +317,10 @@
           'ネストドリーム','メタスリープ','集合夢界','アルゴリズム幻','イマジネーション・ブロック',
           '潜在意識サーバー','多層幻界','ドリームエンジン'
         ];
-        // フェーズ2専用ニューステロップ文（指定の5文、順番にループ）
-        const PHASE2_TICKER_LINES = [
-          '速報：夢のジャングルにて“揺らぎの鼓動”を観測',
-          '現地リポート：森全体が脈動し、鼓動が大地を揺らす',
-          'Breaking Dream News：プレイヤーが未知の揺らぎに包まれる',
-          '夢世界調査局：第二フェーズ“揺らぎの鼓動”に突入',
-          '特報：鼓動の揺らぎが拡大、夢の奥地で異常事態を確認'
+        // フェーズ2用：新しい浮遊ワードのみを使用
+        const PHASE2_FLOAT_WORDS = [
+          '明晰夢','正夢','予知夢','白昼夢','悪夢','金縛り','幽体離脱','夢解釈','夢日記','潜在意識の声',
+          '夢は妄想の世界','臨死体験','アストラル体験','前世の夢','集合夢','シンクロニシティ','覚醒夢'
         ];
         const POPUP_WORDS = [
           '速報','緊急','拡散>>>','データ更新','注目','警戒','LIVE','解析中','未確認','推定','流行中!?','影響度***','仮説','誤報?','続報','draft','β版','ghost','noise','mirror','NULL','TBD','fog'
@@ -334,7 +331,7 @@
           popups: [], spawnTimer: 0,
           // 旧フェーズ3囁きシステム（無効化）
           whisperActive: false, whisperText: '', whisperAlpha: 0, whisperTimer: 0, whisperIndex: 0, whisperTexts: [],
-          // フェーズ2ニュース番組風テロップ
+          // フェーズ2ニュース番組風テロップ（不使用）
           p2Active: false, p2Messages: [], p2Index: 0, p2X: 0, p2Speed: 90, p2Gap: 40,
           // 旧フェーズ3ポップアップ・中央固定テキスト（無効化）
           p3Active: false, p3Items: [], p3SpawnTimer: 0,
@@ -399,11 +396,11 @@
             BG.p3Active = false; BG.p3Items = [];
             BG.p3CenterActive = false; BG.p3CenterText = ''; BG.p3CenterTimer = 0;
           } else if (phase === 'phase2') {
-            // フェーズ2：ニュース番組風テロップを有効化（左→右）
-            BG.p2Active = true;
-            BG.p2Messages = PHASE2_TICKER_LINES.slice(); // 固定順でループ
-            BG.p2Index = 0;
-            BG.p2X = -1000000; // 初期は左外から開始（実際の幅は描画で補正）
+            // フェーズ2：フェーズ1と同じ浮遊テキスト方式（新ワード）
+            BG.p2Active = false;
+            BG.p2Messages = []; BG.p2Index = 0; BG.p2X = 0;
+            BG.popups = [];
+            BG.spawnTimer = 0.6;
           } else {
             // その他のフェーズ：通常のティッカー
             let sourceArray = NEWS_TICKER;
@@ -1828,8 +1825,8 @@
             gameOver();
           }
 
-          // 背景ティッカーとポップアップ更新（UIより背面）: フェーズ1/3
-          if (currentPhase === 'phase1' || currentPhase === 'phase3') {
+          // 背景ティッカーとポップアップ更新（UIより背面）: フェーズ1/2/3
+          if (currentPhase === 'phase1' || currentPhase === 'phase2' || currentPhase === 'phase3') {
             BG.tickerX -= BG.tickerSpeed * dt;
           }
           // フェーズ2テロップのスクロール更新（左→右）
@@ -1837,21 +1834,47 @@
             BG.p2X += BG.p2Speed * dt;
           }
           
-          if (currentPhase === 'phase1' || currentPhase === 'phase3') {
+          if (currentPhase === 'phase1' || currentPhase === 'phase2' || currentPhase === 'phase3') {
             // ポップアップ生成（約2.2～4.0秒間隔）
             BG.spawnTimer -= dt;
             if (BG.spawnTimer <= 0) {
               BG.spawnTimer = 2.2 + Math.random() * 1.8;
-              const sourceList = (currentPhase === 'phase3') ? PHASE3_FLOAT_WORDS : POPUP_WORDS;
+              const sourceList = (currentPhase === 'phase3') ? PHASE3_FLOAT_WORDS : (currentPhase === 'phase2' ? PHASE2_FLOAT_WORDS : POPUP_WORDS);
               const text = sourceList[(Math.random() * sourceList.length) | 0];
               const W = canvas.clientWidth, H = canvas.clientHeight;
+              // 中央寄りに限定（X:20〜80%、Y:30〜70%）
+              const L = 0.2 * W, R = 0.8 * W;
+              const T = 0.3 * H, B = 0.7 * H;
+              // フォントサイズをはみ出さない範囲で自動調整
+              ctx.save();
+              let fs = 36;
+              if (currentPhase === 'phase2') fs = 34;
+              const face = 'system-ui, -apple-system, sans-serif';
+              let wText = Infinity;
+              const maxWidth = Math.max(40, Math.floor((R - L) - 24));
+              while (fs > 14) {
+                ctx.font = `600 ${fs}px ${face}`;
+                wText = Math.ceil(ctx.measureText(text).width);
+                if (wText <= maxWidth) break;
+                fs -= 2;
+              }
+              // 配置: 左端〜右端-テキスト幅の範囲に収める
+              const minX = L;
+              const maxX = Math.max(L, R - wText);
+              const x = minX + Math.random() * Math.max(1, (maxX - minX));
+              const minY = Math.max(T + fs, T + 8);
+              const maxY = Math.max(minY, B - 8);
+              const y = minY + Math.random() * Math.max(1, (maxY - minY));
+              ctx.restore();
               BG.popups.push({
-                x: Math.random() * W,
-                y: 40 + Math.random() * (H * 0.6),
-                vx: (Math.random() * 20 - 10),
+                x,
+                y,
+                vx: (currentPhase==='phase3' ? (Math.random()*10-5) : (Math.random()*20-10)),
                 vy: -20 - Math.random() * 20,
-                life: 0, ttl: 2.5 + Math.random() * 1.2,
+                life: 0,
+                ttl: 2.5 + Math.random() * 1.2,
                 text,
+                fs,
               });
             }
             for (const p of BG.popups) {
@@ -2400,8 +2423,8 @@
             ctx.restore();
           }
 
-          // 背景ポップアップ（浮遊テキスト）: フェーズ1/3
-          if (currentPhase === 'phase1' || currentPhase === 'phase3') {
+          // 背景ポップアップ（浮遊テキスト）: フェーズ1/2/3
+          if (currentPhase === 'phase1' || currentPhase === 'phase2' || currentPhase === 'phase3') {
             for (const p of BG.popups) {
               const fade = Math.max(0, 1 - (p.life / p.ttl));
               ctx.save();
@@ -2414,7 +2437,8 @@
                 ctx.globalAlpha = 0.65 * fade;
                 ctx.fillStyle = '#2c3e66';
               }
-              ctx.font = '600 36px system-ui, -apple-system, sans-serif';
+              const fs = Math.max(14, Math.min(48, Math.floor(p.fs || 36)));
+              ctx.font = `600 ${fs}px system-ui, -apple-system, sans-serif`;
               ctx.fillText(p.text, p.x, p.y);
               ctx.restore();
             }
