@@ -1324,7 +1324,7 @@
           scaleLerpT: 0,
           scaleLerpDur: 1.0,
           vx: 0, vy: 0,
-          speed: 280, // horizontal
+          speed: 238, // horizontal (0.85x)
           onGround: false,
           groundId: null,
           airJumpsLeft: 0,
@@ -1870,14 +1870,18 @@
               state.firstLandingWait = false;
             } else {
               if (platforms && platforms.length > 0 && !player.onGround) {
-                const footY = player.y + player.h;
+                // プレイヤーのヒットボックス（0.75倍、左右中央寄せ、底面はスプライト下端に揃える）
+                const hitW = player.w * 0.75;
+                const hitLeftP = player.x + (player.w - hitW) * 0.5;
+                const hitRightP = hitLeftP + hitW;
+                const footY = player.y + player.h; // 底面は据え置き
                 let best = null, bestDy = 9999;
                 for (const pf of platforms) {
                   if (pf.safe) continue;
                   const hitW = pf.w * 0.8;
                   const hitX = pf.x + (pf.w - hitW) * 0.5;
                   const hitLeft = hitX, hitRight = hitX + hitW;
-                  const overlapX = (player.x + player.w) > (hitLeft - 1) && player.x < (hitRight + 1);
+                  const overlapX = (hitRightP) > (hitLeft - 1) && (hitLeftP) < (hitRight + 1);
                   if (!overlapX) continue;
                   const dy = pf.y - footY;
                   if (dy >= 0 && dy <= 10 && dy < bestDy) { bestDy = dy; best = pf; }
@@ -1948,6 +1952,8 @@
           // フェーズ4：前半は加速、後半は最大帯に固定
           const linear = lerp(phaseSpeedProfile.start, phaseSpeedProfile.end, p);
           f = linear;
+          // フェーズ加速係数を1.20倍（曲線形状は維持）
+          f *= 1.20;
           if (currentPhase === 'final' && p >= 0.5) {
             f = phaseSpeedProfile.end;
           }
@@ -1968,7 +1974,8 @@
             speedOsc.mod += (1 - speedOsc.mod) * Math.min(1, dt * 6);
             mod = 1.0;
           }
-          world.scrollSpeed = speedCtl.base * speedCtl.factor * mod;
+          // 全体スクロール速度を1.30倍
+          world.scrollSpeed = speedCtl.base * speedCtl.factor * mod * 1.30;
           // 深度は常時進行（赤いバー上でも進む）
           state.depth += world.scrollSpeed * dt * 0.12; // px -> meters scale
           // 観賞モード（未アクティブのまま）で一定深度に到達したらエンディング
@@ -2110,7 +2117,11 @@
                 const hitX = pf.x + (pf.w - hitW) * 0.5;
                 const hitY = pf.y + (pf.h - hitH) * 0.5;
                 const hitLeft = hitX, hitRight = hitX + hitW, hitTop = hitY;
-                const overlapX = (player.x + player.w) > (hitLeft - 1) && player.x < (hitRight + 1);
+                // プレイヤーのヒットボックスは幅0.75倍（左右中央寄せ）
+                const pHitW = player.w * 0.75;
+                const pHitL = player.x + (player.w - pHitW) * 0.5;
+                const pHitR = pHitL + pHitW;
+                const overlapX = (pHitR) > (hitLeft - 1) && (pHitL) < (hitRight + 1);
                 if (!overlapX) continue;
                 const crossTop = (prevBottom <= hitTop && currBottom >= hitTop);
                 const withinTol = (currBottom >= hitTop && currBottom <= hitTop + LAND_TOL);
@@ -2128,7 +2139,10 @@
               // 上向き（ジャンプ上昇中）の頭ぶつかり判定は赤いバーのみ有効（すり抜けない）
               for (const pf of platforms) {
                 if (!pf.safe) continue; // 赤いバー以外は上昇時すり抜け
-                const overlapX = (player.x + player.w) > (pf.x - 1) && player.x < (pf.x + pf.w + 1);
+                const pHitW = player.w * 0.75;
+                const pHitL = player.x + (player.w - pHitW) * 0.5;
+                const pHitR = pHitL + pHitW;
+                const overlapX = (pHitR) > (pf.x - 1) && (pHitL) < (pf.x + pf.w + 1);
                 if (!overlapX) continue;
                 const pfBottom = pf.y + pf.h;
                 const hitBottom = (prevTop >= pfBottom && currTop <= pfBottom);
@@ -2308,8 +2322,11 @@
           for (const s of sugars) {
             if (!s.alive) continue;
             const sx = s.x, sy = s.y, r = s.r;
-            // AABB vs circle approximation with player's bounding box
-            const px = player.x, py = player.y, pw = player.w, ph = player.h;
+            // AABB vs circle with player's hitbox (0.75x, bottom-aligned)
+            const pw = player.w * 0.75;
+            const ph = player.h * 0.75;
+            const px = player.x + (player.w - pw) * 0.5;
+            const py = player.y + (player.h - ph); // bottom-aligned
             const nx = Math.max(px, Math.min(sx, px + pw));
             const ny = Math.max(py, Math.min(sy, py + ph));
             const dx = sx - nx, dy = sy - ny;
@@ -3022,8 +3039,9 @@
           const sy = y + h + 8;
           const air = anim ? anim.air : 0;
           const alpha = 0.25 * (1 - 0.6 * air);
-          const rx = Math.max(8, w * (0.7 - 0.25 * air));
-          const ry = 5 * (1 - 0.4 * air);
+          const scale = 0.85; // 影スプライトを0.85倍
+          const rx = Math.max(8, w * (0.7 - 0.25 * air) * scale);
+          const ry = 5 * (1 - 0.4 * air) * scale;
           ctx.fillStyle = `rgba(0,0,0,${alpha.toFixed(3)})`;
           ctx.beginPath();
           ctx.ellipse(cx, sy, rx, Math.max(2, ry), 0, 0, Math.PI * 2);
