@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="グルコースマンの落ちゲー" />
-    <link rel="apple-touch-icon" href="assets/IMG_7890.png" sizes="180x180" />
+    <link rel="apple-touch-icon" href="assets/IMG_7890.PNG" sizes="180x180" />
     <link rel="icon" href="favicon.ico" />
     <title>グルコースマンの落ちゲー</title>
     <style>
@@ -315,7 +315,9 @@
           'デジタルワールド','無意識の創造','夢は集合意識のブロックチェーン？','夢はAI生成と酷似',
           '眠りの中でまた眠る','多層夢を操る','ドリームチェーン','無意識クラウド',
           'ネストドリーム','メタスリープ','集合夢界','アルゴリズム幻','イマジネーション・ブロック',
-          '潜在意識サーバー','多層幻界','ドリームエンジン'
+          '潜在意識サーバー','多層幻界','ドリームエンジン',
+          // 追加ワード
+          '意識はファンタジー','思考は迷宮','誰かの夢の中？','まだ眠れる？','夢も現実も 何を魅せられている？'
         ];
         // フェーズ2用：新しい浮遊ワードのみを使用
         const PHASE2_FLOAT_WORDS = [
@@ -329,6 +331,9 @@
         const BG = {
           tickerText: '', tickerX: 0, tickerSpeed: 60,
           popups: [], spawnTimer: 0,
+          // フェーズ別ワードのシャッフル隊列
+          wordOrder: { phase1: [], phase2: [], phase3: [] },
+          wordIdx:   { phase1: 0,  phase2: 0,  phase3: 0  },
           // 旧フェーズ3囁きシステム（無効化）
           whisperActive: false, whisperText: '', whisperAlpha: 0, whisperTimer: 0, whisperIndex: 0, whisperTexts: [],
           // フェーズ2ニュース番組風テロップ（不使用）
@@ -337,6 +342,27 @@
           p3Active: false, p3Items: [], p3SpawnTimer: 0,
           p3CenterActive: false, p3CenterText: '', p3CenterTimer: 0, p3Cycle: 4.0,
         };
+
+        function wordListForPhase(name){
+          if (name === 'phase2') return PHASE2_FLOAT_WORDS;
+          if (name === 'phase3') return PHASE3_FLOAT_WORDS;
+          return POPUP_WORDS; // phase1 他
+        }
+        function resetWordQueue(name){
+          try {
+            const list = wordListForPhase(name) || [];
+            BG.wordOrder[name] = shuffle(list);
+            BG.wordIdx[name] = 0;
+          } catch(_){}
+        }
+        function nextWordForPhase(name){
+          if (!BG.wordOrder[name] || BG.wordIdx[name] >= BG.wordOrder[name].length) {
+            resetWordQueue(name);
+          }
+          const idx = BG.wordIdx[name]++;
+          const arr = BG.wordOrder[name] || [];
+          return arr[idx % Math.max(1, arr.length)] || '';
+        }
 
         // フェーズ専用リソース管理（特にphase1のDOM/タイマー/リスナを確実に破棄）
         const PhaseCleanup = {
@@ -395,12 +421,14 @@
             BG.spawnTimer = 0.6;
             BG.p3Active = false; BG.p3Items = [];
             BG.p3CenterActive = false; BG.p3CenterText = ''; BG.p3CenterTimer = 0;
+            resetWordQueue('phase3');
           } else if (phase === 'phase2') {
             // フェーズ2：フェーズ1と同じ浮遊テキスト方式（新ワード）
             BG.p2Active = false;
             BG.p2Messages = []; BG.p2Index = 0; BG.p2X = 0;
             BG.popups = [];
             BG.spawnTimer = 0.6;
+            resetWordQueue('phase2');
           } else {
             // その他のフェーズ：通常のティッカー
             let sourceArray = NEWS_TICKER;
@@ -410,6 +438,7 @@
             const items = shuffle(sourceArray).slice(0, 18);
             BG.tickerText = items.join('  |  ') + '   ';
             BG.tickerX = 0;
+            resetWordQueue('phase1');
           }
           BG.spawnTimer = 0;
         }
@@ -505,6 +534,102 @@
           window.PHASES = PHASES;
           window.resolvePhase = resolvePhase;
         } catch(_) {}
+
+        // === 背景用サブフェーズ（7ステップ） ===
+        // ゲームロジックのフェーズとは独立して、BGM時間だけで背景切替を制御する
+        const BG_STEPS = [
+          { start: 0,     phase: 'phase1', sub: 1, step: 1 },     // 0–340
+          { start: 340,   phase: 'phase2', sub: 1, step: 2 },     // 340–620
+          { start: 620,   phase: 'phase3', sub: 1, step: 3 },     // 620–833
+          { start: 833,   phase: 'phase3', sub: 2, step: 4 },     // 833–942
+          { start: 942,   phase: 'final',  sub: 1, step: 5 },     // 942–1017
+          { start: 1017,  phase: 'final',  sub: 2, step: 6 },     // 1017–1060
+          { start: 1060,  phase: 'final',  sub: 3, step: 7 },     // 1060–END
+        ];
+
+        // 明示的な時間→背景インデックス関数（境界厳密）
+        function getBgIndex(t) {
+          const sec = Math.max(0, Number(t) || 0);
+          // 新境界（秒）: 0–340, 340–620, 620–833, 833–955, 955–1017, 1017–1060, 1060–end
+          if (sec < 340) return 0;           // 0–339.999
+          else if (sec < 620) return 1;      // 340–620
+          else if (sec < 833) return 2;      // 620–833
+          else if (sec < 955) return 3;      // 833–954.999
+          else if (sec < 1017) return 4;     // 955–1016.999
+          else if (sec < 1060) return 5;     // 1017–1060
+          else return 6;                     // 1060–end
+        }
+        try { window.getBgIndex = getBgIndex; } catch(_) {}
+        // dev用テスト: test(0,340,620,833,942,1017,1060) → [0,1,2,3,4,5,6]
+        try { window.test = (...vals) => { const out = vals.map(v=>getBgIndex(v)); console.log('[BG test]', out); return out; }; } catch(_) {}
+        // 例: test(0,340,620,833,955,1017,1060) → [0,1,2,3,4,5,6]
+
+        const bgVisual = {
+          phase: 'phase1', sub: 1, step: 1,
+          trans: { active: false, t: 0, dur: 1.0, fade: 0.3, from: { phase: 'phase1', sub: 1, step: 1 }, to: { phase: 'phase1', sub: 1, step: 1 } }
+        };
+        // 簡易パフォーマンス計測（FPSに応じてblur縮小/無効化）
+        const PERF = { blurScale: 1, frames: 0, time: 0, evalT: 0 };
+
+        function updateBgVisual(dt) {
+          // 進行中は再入禁止（二重トリガ防止）
+          if (bgVisual.trans.active) {
+            bgVisual.trans.t += dt;
+            if (bgVisual.trans.t >= bgVisual.trans.dur) {
+              bgVisual.trans.active = false;
+              try { if (DEV && DEV.dev) console.log('[BG] transition end'); } catch(_){}
+            }
+            return;
+          }
+          // BGM時間から背景インデックスを決定（getBgIndex のみ使用）
+          const t = (bgmEl && isFinite(bgmEl.currentTime||NaN)) ? (bgmEl.currentTime||0) : (state.time||0);
+          const idx = getBgIndex(t);
+          const targetStep = (idx|0) + 1; // 1..7
+          if (targetStep !== bgVisual.step) {
+            // Safari等での時間ジャンプでも順番を必ず 1つずつ進める
+            const nextStep = (targetStep > bgVisual.step) ? (bgVisual.step + 1) : targetStep;
+            // 例外: 955s（step=5）への切替はハードカット（時刻が955s以上のときのみ）
+            const isHardCut = (nextStep === 5) && (t >= 955.0);
+            if (isHardCut) {
+              bgVisual.trans.active = false;
+              bgVisual.trans.t = 0;
+              // ログ（dev）: mode:cut
+              try {
+                if (DEV && DEV.dev) {
+                  const oldIdx = (bgVisual.step|0) - 1;
+                  const newIdx = nextStep - 1;
+                  const file = (BACKGROUNDS[newIdx]||'').split('/').pop();
+                  console.log(`[BG] t=${t.toFixed(3)} idx ${Math.max(-1,oldIdx)}->${newIdx} (mode:cut) file: ${file}`);
+                }
+              } catch(_){}
+              // 即時反映
+              bgVisual.step = nextStep;
+            } else {
+              // 通常：スクロール切替
+              bgVisual.trans.active = true;
+              bgVisual.trans.t = 0;
+              bgVisual.trans.dur = 10.0; bgVisual.trans.fade = 0.0;
+              bgVisual.trans.from = { phase: bgVisual.phase, sub: bgVisual.sub, step: bgVisual.step };
+              bgVisual.trans.to   = { phase: bgVisual.phase, sub: bgVisual.sub, step: nextStep };
+              try {
+                if (DEV && DEV.dev) {
+                  const oldIdx = (bgVisual.trans.from.step|0) - 1;
+                  const newIdx = nextStep - 1;
+                  const file = (BACKGROUNDS[newIdx]||'').split('/').pop();
+                  console.log(`[BG] t=${t.toFixed(3)} idx ${oldIdx}->${newIdx} (mode:scroll) file: ${file}`);
+                }
+              } catch(_){}
+              // 目標状態に更新（描画はトランジションで段階的）
+              bgVisual.step = nextStep;
+            }
+          }
+          if (bgVisual.trans.active) {
+            bgVisual.trans.t += dt;
+            if (bgVisual.trans.t >= bgVisual.trans.dur) {
+              bgVisual.trans.active = false;
+            }
+          }
+        }
 
         // 即時フェーズ適用（BGM状態に依存しない）
         function applyPhaseImmediate(name){
@@ -779,6 +904,19 @@
         phaseBackgrounds.final.onload = () => { backgroundsReady.final = true; };
         phaseBackgrounds.final.onerror = () => { backgroundsReady.final = false; };
         phaseBackgrounds.final.src = 'assets/final-bg.png';
+
+        // サブフェーズ用の7枚背景（固定定数 BACKGROUNDS）
+        const BACKGROUNDS = [
+          'assets/111.png','assets/222.png','assets/333.png',
+          'assets/444.png','assets/555.png','assets/666.png','assets/777.png'
+        ];
+        const BG_STEP_IMAGES = BACKGROUNDS.map(src => {
+          const im = new Image();
+          im.onload = () => {/* noop: ready */};
+          im.onerror = () => { try { console.warn('[BG] failed to load:', src); } catch(_){} };
+          im.src = src;
+          return im;
+        });
 
         // キャラスプライト（任意）：assets/normal.png（通常）、assets/sleep.png（ゲームオーバー／赤バー上）
         const charSprite = new Image();
@@ -1689,6 +1827,17 @@
           const dt = rawDt * Math.max(0.05, timeCtl.factor);
 
           if (state.running && !state.paused) update(dt);
+          // FPS計測（1.5秒ごとに評価してblurを縮小/無効化）
+          try {
+            PERF.frames += 1; PERF.time += rawDt; PERF.evalT += rawDt;
+            if (PERF.evalT >= 1.5) {
+              const fps = (PERF.frames / Math.max(0.001, PERF.time));
+              let s = 1;
+              if (fps < 35) s = 0; else if (fps < 50) s = 0.5;
+              if (s !== PERF.blurScale) { PERF.blurScale = s; try { if (DEV && DEV.dev) console.log('[BG] blurScale', s, 'fps', fps.toFixed(1)); } catch(_){} }
+              PERF.frames = 0; PERF.time = 0; PERF.evalT = 0;
+            }
+          } catch(_){}
           draw();
           requestAnimationFrame(tick);
         }
@@ -1771,6 +1920,8 @@
           
           // フェーズ制御の更新
           updatePhase();
+          // 背景サブフェーズ（BGM時間）
+          updateBgVisual(dt);
           
           // フェーズ変更演出の更新
           if (phaseTransition.active) {
@@ -1839,8 +1990,7 @@
             BG.spawnTimer -= dt;
             if (BG.spawnTimer <= 0) {
               BG.spawnTimer = 2.2 + Math.random() * 1.8;
-              const sourceList = (currentPhase === 'phase3') ? PHASE3_FLOAT_WORDS : (currentPhase === 'phase2' ? PHASE2_FLOAT_WORDS : POPUP_WORDS);
-              const text = sourceList[(Math.random() * sourceList.length) | 0];
+              const text = nextWordForPhase(currentPhase);
               const W = canvas.clientWidth, H = canvas.clientHeight;
               // 中央寄りに限定（X:20〜80%、Y:30〜70%）
               const L = 0.2 * W, R = 0.8 * W;
@@ -2286,46 +2436,35 @@
             ctx.translate(shakeX, shakeY);
           }
           
-          // Background gradient or image（phase3 は夕焼けジャングル＋ゆらぎ演出）
-          const currentBg = phaseBackgrounds[currentPhase];
-          if (currentPhase === 'phase3' && currentBg && backgroundsReady[currentPhase]) {
-            // 背景を横方向に帯状に分割し、わずかにオフセット/スケールしてゆらぎを表現
-            const bands = 24;
-            const bh = Math.ceil(H / bands);
-            const t = state.time;
-            const iw = currentBg.naturalWidth || currentBg.width || W;
-            const ih = currentBg.naturalHeight || currentBg.height || H;
-            for (let i = 0; i < bands; i++) {
-              const sy = i * bh;
-              const sh = Math.min(bh, H - sy);
-              const phase = i / bands;
-              const offset = Math.sin(phase * Math.PI * 2 + t * 0.6) * 8; // 横ゆらぎ
-              const scaleX = 1 + 0.015 * Math.sin(phase * Math.PI + t * 0.4); // 横引き延ばし
-              const dw = Math.floor(W * scaleX);
-              const dx = Math.floor(- (dw - W) / 2 + offset);
-              // 画像の対応する帯を等比で切り出して貼る（常に全幅を使う）
-              const srcY = Math.floor(sy * ih / H);
-              const srcH = Math.max(1, Math.ceil(sh * ih / H));
-              ctx.drawImage(currentBg, 0, srcY, iw, srcH, dx, sy, dw, sh);
-            }
-            // 夕焼けティントを重ねる
+          // === 背景描画（サブフェーズ対応・スライド＋フェード） ===
+          const drawBgStepLayer = (step, alpha=1, offsetY=0) => {
+            const idx = Math.max(1, Math.min(7, step)) - 1;
+            const img = BG_STEP_IMAGES[idx];
+            const ready = !!(img && img.complete && (img.naturalWidth || 0) > 0);
             ctx.save();
-            const sunset = ctx.createLinearGradient(0, 0, 0, H);
-            sunset.addColorStop(0, 'rgba(255,140,90,0.20)');
-            sunset.addColorStop(1, 'rgba(80,30,60,0.18)');
-            ctx.fillStyle = sunset;
-            ctx.fillRect(0, 0, W, H);
+            ctx.translate(0, offsetY);
+            ctx.globalAlpha *= alpha;
+            if (ready) {
+              ctx.drawImage(img, 0, 0, W, H);
+            } else {
+              const grad = ctx.createLinearGradient(0, 0, 0, H);
+              grad.addColorStop(0, '#bfe1ff');
+              grad.addColorStop(1, '#ffffff');
+              ctx.fillStyle = grad;
+              ctx.fillRect(0, 0, W, H);
+            }
             ctx.restore();
-          } else if (currentBg && backgroundsReady[currentPhase]) {
-            // フェーズ専用背景画像を描画
-            ctx.drawImage(currentBg, 0, 0, W, H);
+          };
+
+          if (bgVisual.trans && bgVisual.trans.active) {
+            // 同時スクロール（一定速度・ぼかしなし）
+            const p = Math.max(0, Math.min(1, bgVisual.trans.t / Math.max(0.001, bgVisual.trans.dur)));
+            const yOld = Math.floor(-p * H);     // 0 → -H
+            const yNew = Math.floor(H - p * H);  // H → 0
+            drawBgStepLayer(bgVisual.trans.from.step, 1.0, yOld);
+            drawBgStepLayer(bgVisual.trans.to.step, 1.0, yNew);
           } else {
-            // デフォルトのグラデーション背景
-            const grad = ctx.createLinearGradient(0, 0, 0, H);
-            grad.addColorStop(0, '#bfe1ff');
-            grad.addColorStop(1, '#ffffff');
-            ctx.fillStyle = grad;
-            ctx.fillRect(0, 0, W, H);
+            drawBgStepLayer(bgVisual.step, 1.0, 0);
           }
 
           // 天蓋描画は無効化（直線/ドームなし）
