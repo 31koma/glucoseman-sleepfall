@@ -1521,6 +1521,8 @@
         function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
         // 足場の消滅秒数（着地から何秒で消えるか）
         const PLATFORM_DECAY_LIMIT = 1.5;
+        // 画面内に見える非セーフ足場の最低保証数
+        const MIN_VISIBLE_PLATFORMS = 3;
         // 検証用: X生成ヒストグラム（左右25%/中央50%）
         window.gmDebug = window.gmDebug || {};
         window.gmDebug.runSpawnHistogram = function(times = 1000) {
@@ -1675,17 +1677,20 @@
 
         // Input
         const keys = new Set();
-        const JUMP_COYOTE = 0.12; // 離れてからもジャンプできる猶予
-        const JUMP_BUFFER = 0.14; // 押し先行の猶予
-        const LAND_TOL = 6; // 足場上面の吸着許容（px）
+        // 左右同時押し対策：最後に押した方向を優先
+        const inputOrder = { left: 0, right: 0 };
+        const nowMs = () => (typeof performance!=='undefined' && performance.now ? performance.now() : Date.now());
+        const JUMP_COYOTE = 0.18; // 離れてからもジャンプできる猶予（操作感向上）
+        const JUMP_BUFFER = 0.20; // 押し先行の猶予（誤ミス軽減）
+        const LAND_TOL = 8; // 足場上面の吸着許容（px）
         const DETACH_AT_TOP = 6; // 画面上端付近で足場をすり抜けにするしきい値（px）
         const control = { coyote: 0, jumpBuf: 0 };
         window.addEventListener('keydown', (e) => {
           if (e.repeat) return;
           // DEV: フェーズジャンプ（G/H/J/K）。大文字小文字どちらでも可。
           // フェーズジャンプは dev-tools.js 側でのみ処理（重複を避ける）
-          if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.add('left');
-          if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.add('right');
+          if (e.code === 'ArrowLeft' || e.code === 'KeyA') { keys.add('left'); inputOrder.left = nowMs(); }
+          if (e.code === 'ArrowRight' || e.code === 'KeyD') { keys.add('right'); inputOrder.right = nowMs(); }
           if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
             keys.add('jump');
             control.jumpBuf = JUMP_BUFFER;
@@ -1724,6 +1729,8 @@
             ev.preventDefault();
             keys.add(key);
             if (isJump) control.jumpBuf = JUMP_BUFFER;
+            if (key === 'left') inputOrder.left = nowMs();
+            if (key === 'right') inputOrder.right = nowMs();
             btn.dataset.pid = ev.pointerId;
             btn.setAttribute('data-on','1');
           };
@@ -2073,10 +2080,18 @@
             BG.popups.length = 0;
           }
 
-          // 入力（横移動）
-          player.vx = 0;
-          if (keys.has('left')) player.vx -= player.speed;
-          if (keys.has('right')) player.vx += player.speed;
+          // 入力（横移動）：左右同時押し時は最後に押した方向を優先
+          let dir = 0;
+          const L = keys.has('left');
+          const R = keys.has('right');
+          if (L && R) {
+            dir = (inputOrder.left >= inputOrder.right) ? -1 : 1;
+          } else if (L) {
+            dir = -1;
+          } else if (R) {
+            dir = 1;
+          }
+          player.vx = dir * player.speed;
           player.x += player.vx * dt;
 
           // Wrap horizontally for flow
@@ -2361,6 +2376,20 @@
             if (maxY < H + 100) maxY = Math.max(maxY, H + 40);
             maxY += rand(gapMin, gapMax);
             platforms.push(makePlatform(maxY));
+          }
+          // 可視最低数の保証（3未満になったら即時補充）
+          const visibleNonSafe = platforms.reduce((n,p)=> n + (!p.safe && (p.y + p.h) > 0 && p.y < H ? 1 : 0), 0);
+          if (visibleNonSafe < MIN_VISIBLE_PLATFORMS) {
+            const need = MIN_VISIBLE_PLATFORMS - visibleNonSafe;
+            const gapMin = Math.floor(world.platformGapMin * world.platformGapScale);
+            const gapMax = Math.floor(world.platformGapMax * world.platformGapScale);
+            let added = 0;
+            while (added < need && added < 4) {
+              if (maxY < H + 100) maxY = Math.max(maxY, H + 40);
+              maxY += rand(gapMin, gapMax);
+              platforms.push(makePlatform(maxY));
+              added++;
+            }
           }
 
           // Collect sugars
