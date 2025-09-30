@@ -1519,6 +1519,8 @@
         function rand(a, b) { return Math.floor(a + Math.random() * (b - a)); }
         function randf(a, b) { return a + Math.random() * (b - a); }
         function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+        // 足場の消滅秒数（着地から何秒で消えるか）
+        const PLATFORM_DECAY_LIMIT = 1.5;
         // 検証用: X生成ヒストグラム（左右25%/中央50%）
         window.gmDebug = window.gmDebug || {};
         window.gmDebug.runSpawnHistogram = function(times = 1000) {
@@ -2310,8 +2312,8 @@
           if (state.safeGlow) state.safeGlow.y -= scroll;
           if (state.safeGlow) state.safeGlow.y -= scroll;
 
-          // 通常足場の消滅タイマー：着地から1.5秒で消える（直前0.5秒は点滅）
-          const DECAY_LIMIT = 1.5;
+          // 通常足場の消滅タイマー：着地からPLATFORM_DECAY_LIMIT秒で消える
+          const DECAY_LIMIT = PLATFORM_DECAY_LIMIT;
           for (const p of platforms) {
             if (!p.safe && p.decayT != null) p.decayT += dt;
           }
@@ -2690,9 +2692,9 @@
               continue;
             }
             // 通常足場の点滅（消滅直前0.5秒）
-            const blink = (p.decayT != null && p.decayT >= (DECAY_LIMIT - 0.5));
+            const blink = (p.decayT != null && p.decayT >= (PLATFORM_DECAY_LIMIT - 0.5));
             if (blink) {
-              const phase = p.decayT - (DECAY_LIMIT - 0.5);
+              const phase = p.decayT - (PLATFORM_DECAY_LIMIT - 0.5);
               const visible = (Math.floor((phase) / 0.1) % 2) === 0; // 0.1秒ごとに交互
               if (!visible) continue; // 非表示フレーム
             }
