@@ -1033,7 +1033,8 @@
         // 80〜120秒かけて上から下へ流し切り、クロスフェードで次の景色へ。
         // フィーバー／インスリンでは背景を変えず、景色の見え方だけを変える。
         // ===================================================================
-        const EMO_KEYS = ['phase1','phase2','phase3','phase4','phase5','phase1b','phase2b','phase3b','phase4b','phase5b'];
+        // 新背景12枚（bg01=最も明るい空/雲 → bg12=最も深い水中）。明るさ順で「降りていく旅」。
+        const EMO_KEYS = ['bg01','bg02','bg03','bg04','bg05','bg06','bg07','bg08','bg09','bg10','bg11','bg12'];
         const EMO_BG = {};
         EMO_KEYS.forEach(k => {
           const im = new Image();
@@ -1041,10 +1042,8 @@
           im.src = 'assets/' + k + '.png';
           EMO_BG[k] = im;
         });
-        // 採用順（全10枚・絵巻物の旅路）：
-        // 旅の始まり → 深まる夢 → 糖の巡り → 夢への誘い → 静かな糖の海 →
-        // 水中の城 → 回復と生命 → 高揚 → 解放 → 終着点 → （ループ）
-        const EMO_ORDER = ['phase1','phase1b','phase2','phase2b','phase3','phase3b','phase4','phase4b','phase5b','phase5'];
+        // 採用順（全12枚・絵巻物の旅路：明→暗＝空から深海へ降り、ループで再び空へ）
+        const EMO_ORDER = ['bg01','bg02','bg03','bg04','bg05','bg06','bg07','bg08','bg09','bg10','bg11','bg12'];
         function emoDur() { return 80 + Math.random() * 40; } // 1枚を80〜120秒で流し切る
         const emoBG = {
           idx: 0,
@@ -2707,7 +2706,7 @@
             BG.p2X += BG.p2Speed * dt;
           }
           
-          if (currentPhase === 'phase1' || currentPhase === 'phase2' || currentPhase === 'phase3') {
+          if (false) { // 背景の浮遊文字（解析中など）は廃止
             // ポップアップ生成（約2.2～4.0秒間隔）
             BG.spawnTimer -= dt;
             if (BG.spawnTimer <= 0) {
@@ -3390,7 +3389,7 @@
             // 旧：囁きテキストは無効化
             // 残置（将来の切替用）
             
-          } else if (currentPhase === 'phase2' && BG.p2Active) {
+          } else if (false) { // フェーズ2の下部テロップは廃止
             // フェーズ2専用：半透明の黒帯 + 白文字、左→右にスクロール
             const barH = 64;
             const barY = H - barH - 6;
@@ -3426,7 +3425,7 @@
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, barY, W, 1);
             ctx.restore();
-          } else if (currentPhase === 'phase1') {
+          } else if (false) { // フェーズ1の下部テロップは廃止
             // 通常の背景ティッカー
             ctx.save();
             const barH = 64;
@@ -3466,8 +3465,8 @@
             ctx.restore();
           }
 
-          // 背景ポップアップ（浮遊テキスト）: フェーズ1/2/3
-          if (currentPhase === 'phase1' || currentPhase === 'phase2' || currentPhase === 'phase3') {
+          // 背景ポップアップ（浮遊テキスト）は廃止
+          if (false) {
             for (const p of BG.popups) {
               const fade = Math.max(0, 1 - (p.life / p.ttl));
               ctx.save();
