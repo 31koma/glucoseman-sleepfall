@@ -199,7 +199,17 @@
           fever: false,
           feverTime: 0,
           feverNeed: 5,
+          feverDuration: 15.0,
           pickStreak: 0,
+          // === 代謝リズム（インスリンスパイク）システム ===
+          // 糖で高まる代謝（0..1）。移動/ジャンプ/落下の操作感をわずかに良くする
+          sugarBoost: 0,
+          // フィーバー突入フラッシュ（0..1, 演出用）
+          feverFlash: 0,
+          // フィーバー残量比（オーラ/ゲージ用に毎フレーム更新）
+          feverRatio: 0,
+          // インスリンスパイク：フィーバー後の「高揚のあとの静けさ」
+          insulin: { active: false, t: 0, dur: 5.0 },
           // セーフ足場関連
           safePlatformId: null,
           leftSafe: false,
@@ -569,6 +579,8 @@
         let screenShake = { active: false, intensity: 0, timer: 0, duration: 0 };
         // フェーズ3専用：スローモーション制御（0.5x → 1.0x）
         const timeCtl = { active: false, from: 1.0, target: 1.0, factor: 1.0, t: 0, duration: 0 };
+        // インスリンスパイクのスローモーション係数（1.0=通常, 0.76=スパイク中）。BGMには影響しない。
+        let insulinScale = 1.0;
 
         // フェーズごとの極端な難易度カーブ（スピード係数）
         const speedCtl = { base: 60, factor: 1.0 };
@@ -953,6 +965,16 @@
             ['sweep', 500, 1200, 0.22, 'triangle', 0.04],
             ['beep', 1400, 0.06, 'square', 0.03],
           ]),
+          // 糖取得の気持ちよいキラッ
+          sugar: () => audio.seq([
+            ['beep', 1320, 0.04, 'sine', 0.028],
+            ['beep', 1760, 0.05, 'triangle', 0.024],
+          ]),
+          // インスリンスパイク：高揚のあとの、ふっと沈む静けさ
+          insulin: () => audio.seq([
+            ['sweep', 880, 320, 0.5, 'sine', 0.035],
+            ['beep', 240, 0.18, 'sine', 0.025],
+          ]),
         };
 
         // （フェーズ4のエンドロール機能は削除）
@@ -1004,6 +1026,57 @@
           im.src = src;
           return im;
         });
+
+        // ===================================================================
+        // === 糖と音楽と眠りの絵巻物：背景システム（最終決定版）===
+        // 背景はステージではなく「旅の景色」。10枚の縦長背景を1枚ずつ、
+        // 80〜120秒かけて上から下へ流し切り、クロスフェードで次の景色へ。
+        // フィーバー／インスリンでは背景を変えず、景色の見え方だけを変える。
+        // ===================================================================
+        const EMO_KEYS = ['phase1','phase2','phase3','phase4','phase5','phase1b','phase2b','phase3b','phase4b','phase5b'];
+        const EMO_BG = {};
+        EMO_KEYS.forEach(k => {
+          const im = new Image();
+          im.onerror = () => { try { console.warn('[EMOBG] failed to load:', k); } catch(_){} };
+          im.src = 'assets/' + k + '.png';
+          EMO_BG[k] = im;
+        });
+        // 採用順（全10枚・絵巻物の旅路）：
+        // 旅の始まり → 深まる夢 → 糖の巡り → 夢への誘い → 静かな糖の海 →
+        // 水中の城 → 回復と生命 → 高揚 → 解放 → 終着点 → （ループ）
+        const EMO_ORDER = ['phase1','phase1b','phase2','phase2b','phase3','phase3b','phase4','phase4b','phase5b','phase5'];
+        function emoDur() { return 80 + Math.random() * 40; } // 1枚を80〜120秒で流し切る
+        const emoBG = {
+          idx: 0,
+          cur: EMO_ORDER[0],
+          dur: 95,                 // 現在背景を流し切る秒数（=縦スクロール時間）
+          panT: 0,                 // 縦スクロール経過
+          trans: { active: false, t: 0, dur: 2.4, from: EMO_ORDER[0], to: EMO_ORDER[0], fromPan: 1 },
+        };
+        function emoResetBG() {
+          emoBG.idx = 0; emoBG.cur = EMO_ORDER[0]; emoBG.dur = emoDur(); emoBG.panT = 0;
+          emoBG.trans.active = false; emoBG.trans.t = 0;
+          emoBG.trans.from = EMO_ORDER[0]; emoBG.trans.to = EMO_ORDER[0]; emoBG.trans.fromPan = 0;
+        }
+        function emoAdvance() {
+          const nextIdx = (emoBG.idx + 1) % EMO_ORDER.length;
+          const nextKey = EMO_ORDER[nextIdx];
+          emoBG.trans.active = true; emoBG.trans.t = 0; emoBG.trans.dur = 2.4; // クロスフェード
+          emoBG.trans.from = emoBG.cur;
+          emoBG.trans.fromPan = Math.min(1, emoBG.panT / Math.max(0.001, emoBG.dur));
+          emoBG.trans.to = nextKey;
+          emoBG.idx = nextIdx; emoBG.cur = nextKey; emoBG.panT = 0; emoBG.dur = emoDur();
+        }
+        function updateEmoBG(dt) {
+          if (emoBG.trans.active) {
+            emoBG.trans.t += dt;
+            if (emoBG.trans.t >= emoBG.trans.dur) emoBG.trans.active = false;
+          }
+          // 縦スクロール（絵巻物を上→下へ）。フィーバー/インスリン中も景色は同じものを流し続ける
+          emoBG.panT += dt;
+          // 1枚を流し切ったら、次の景色へクロスフェード
+          if (emoBG.panT >= emoBG.dur && !emoBG.trans.active) emoAdvance();
+        }
 
         // キャラスプライト（任意）：assets/normal.png（通常）、assets/sleep.png（ゲームオーバー／赤バー上）
         const charSprite = new Image();
@@ -1427,6 +1500,149 @@
         let platformIdCounter = 1;
         let sugarIdCounter = 1;
         let popups = [];
+        // === 没入演出用バッファ ===
+        let particles = [];   // キラキラ/着地粒子/吸い込み
+        let landRings = [];   // 着地の光リング
+        // グルコースマンのセリフ（画面上の吹き出し）
+        let speech = { text: '', t: 0, dur: 0, color: '#fff', cd: 0 };
+
+        // === グルコースマンのセリフ集（少し詩的に・少し変に） ===
+        const GM_LINES = {
+          sugar:   ['糖、補給ッ！', '一粒で世界が軽くなる', '甘さが足に入ってきた'],
+          land:    ['落ちているんじゃない、進んでいるんだ', 'バーが鳴っている', 'この着地、代謝している'],
+          combo:   ['糖の流れが見える', 'まだ甘い、まだいける', '血糖値の風に乗れ'],
+          fever:   ['グルコース全開！', '今だけ世界が甘くなる', '甘さが限界を超えた'],
+          insulin: ['少し重い……でも進める', '甘さのあとに、眠気が来た', 'さっきの光が、まだ残っている'],
+        };
+        // 着地などで浮かび上がる独創的な言葉
+        const FLOAT_WORDS_METAB = [
+          '糖が世界を押し流す','甘さの重力に身を任せろ','眠りの底で、糖が光る','今、体内で宇宙が回る',
+          '代謝のリズムが聞こえる','糖分航路、開通','落ちるほど、満ちていく','インスリンの波が来る','眠気と糖が交差する'
+        ];
+        function gmSay(category, opt) {
+          opt = opt || {};
+          const arr = GM_LINES[category];
+          if (!arr || !arr.length) return;
+          if (speech.cd > 0 && !opt.force) return; // 連発防止
+          speech.text = arr[(Math.random()*arr.length)|0];
+          speech.dur = opt.dur || 2.2;
+          speech.t = 0;
+          speech.color = opt.color || '#ffffff';
+          speech.cd = (opt.cd != null) ? opt.cd : 2.6;
+        }
+
+        // === 操作感マルチプライヤ（糖・フィーバー・インスリンで変化）===
+        function insulinK() { // 1（開始・最も鈍い）→ 0（終わり・回復）
+          if (!state.insulin.active) return 0;
+          return Math.max(0, Math.min(1, state.insulin.t / Math.max(0.001, state.insulin.dur)));
+        }
+        function moveMul() {
+          let m = 1 + state.sugarBoost * 0.10;            // 糖で横移動が軽く（最大+10%）
+          if (state.fever) m += 0.06;                     // フィーバーで全開
+          if (state.insulin.active) m *= (1 - 0.18 * insulinK()); // 開始0.82→終盤1.0へ回復
+          return m;
+        }
+        function jumpMul() {
+          let m = 1 + state.sugarBoost * 0.05;            // 糖でジャンプが少し良く（最大+5%）
+          if (state.fever) m += 0.04;
+          if (state.insulin.active) m *= (1 - 0.08 * insulinK()); // 少し重い→回復
+          return m;
+        }
+        function gravMul() {
+          let m = 1 - state.sugarBoost * 0.04;            // 糖中はふわっと軽い操作感
+          if (state.insulin.active) m *= (1 + 0.06 * insulinK()); // インスリン中は少し重い落下
+          return m;
+        }
+
+        // === 演出スポーナ ===
+        function spawnLandFx(cx, foot, comboMult) {
+          const big = comboMult >= 3;
+          landRings.push({ x: cx, y: foot, r0: 8, maxR: 44 + comboMult * 9, life: 0, ttl: 0.5,
+                           color: state.fever ? '255,240,170' : '180,230,255', w: 3 });
+          const n = 7 + comboMult * 2;
+          for (let i = 0; i < n; i++) {
+            const ang = -Math.PI/2 + (Math.random()*2-1) * 0.95;
+            const sp = 80 + Math.random() * 150;
+            particles.push({ x: cx + (Math.random()*28-14), y: foot, vx: Math.cos(ang)*sp, vy: Math.sin(ang)*sp,
+                             g: 360, life: 0, ttl: 0.42 + Math.random()*0.32, r: 2 + Math.random()*2.4,
+                             color: state.fever ? '#fff1a8' : '#bfe6ff', drag: 1.4 });
+          }
+          const inten = big ? 3.2 : 1.8; // 軽め（揺れすぎない）
+          const insulinNow = !!(state.insulin && state.insulin.active);
+          if (!insulinNow && (!screenShake.active || screenShake.intensity < inten)) {
+            // インスリンスパイク中は画面を揺らさない（静けさを保つ）
+            screenShake = { active: true, intensity: inten, timer: 0, duration: 0.22 };
+          }
+          if (Math.random() < (big ? 0.5 : 0.16)) {
+            const w = FLOAT_WORDS_METAB[(Math.random()*FLOAT_WORDS_METAB.length)|0];
+            popups.push({ x: cx, y: foot - 42, vx: 0, vy: -20, life: 0, text: w, color: 'rgba(220,240,255,0.95)' });
+          }
+        }
+        function spawnSugarFx(sx, sy) {
+          for (let i = 0; i < 10; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const sp = 30 + Math.random() * 95;
+            particles.push({ x: sx, y: sy, vx: Math.cos(ang)*sp, vy: Math.sin(ang)*sp, g: 40, life: 0,
+                             ttl: 0.42 + Math.random()*0.3, r: 1.5 + Math.random()*2,
+                             color: state.fever ? '#fff7c0' : '#ffe58a', drag: 2.0 });
+          }
+          const tx = player.x + player.w/2, ty = player.y + player.h*0.5;
+          for (let i = 0; i < 5; i++) {
+            particles.push({ x: sx + (Math.random()*20-10), y: sy + (Math.random()*20-10), vx: 0, vy: 0, g: 0,
+                             life: 0, ttl: 0.4, r: 2 + Math.random()*1.5, color: '#fff3b0', target: { x: tx, y: ty } });
+          }
+          landRings.push({ x: sx, y: sy, r0: 3, maxR: 22, life: 0, ttl: 0.34, color: '255,235,150', w: 2 });
+        }
+        function startInsulin() {
+          state.insulin.active = true;
+          state.insulin.t = state.insulin.dur;
+          // 画面揺れを止めて静けさへ（高揚のあとの静けさ）
+          screenShake.active = false; screenShake.intensity = 0;
+          gmSay('insulin', { force: true, dur: 2.8, color: '#bcd0ff' });
+          try { sfxPlay.insulin(); } catch(_){}
+          popups.push({ x: (canvas.clientWidth/2)||160, y: 130, vx: 0, vy: -12, life: 0,
+                        text: 'インスリンの波が来る', color: 'rgba(180,200,255,0.95)' });
+        }
+        // === 代謝演出の毎フレーム更新 ===
+        function updateMetabFx(dt) {
+          state.sugarBoost = Math.max(0, state.sugarBoost - dt * 0.18); // ゆっくり減衰
+          state.feverFlash = Math.max(0, state.feverFlash - dt * 2.2);
+          // フィーバー中：覚醒した糖のキラキラが画面に漂う（背景は変えない）
+          if (state.fever) {
+            const Wc = (canvas && canvas.clientWidth) || 320;
+            const Hc = (canvas && canvas.clientHeight) || 600;
+            state._feverSparkT = (state._feverSparkT || 0) + dt;
+            const interval = 0.05; // 約20個/秒
+            while (state._feverSparkT >= interval) {
+              state._feverSparkT -= interval;
+              particles.push({ x: Math.random()*Wc, y: Hc + 8, vx: (Math.random()*2-1)*12, vy: -(26 + Math.random()*40),
+                               g: 0, life: 0, ttl: 0.8 + Math.random()*0.7, r: 1 + Math.random()*2,
+                               color: '#fff3b0', drag: 0.5 });
+            }
+          } else {
+            state._feverSparkT = 0;
+          }
+          if (state.insulin.active) {
+            state.insulin.t -= dt;
+            if (state.insulin.t <= 0) { state.insulin.active = false; state.insulin.t = 0; }
+          }
+          if (speech.cd > 0) speech.cd = Math.max(0, speech.cd - dt);
+          if (speech.dur > 0) { speech.t += dt; if (speech.t >= speech.dur) { speech.dur = 0; speech.text = ''; } }
+          for (const p of particles) {
+            p.life += dt;
+            if (p.target) {
+              p.x += (p.target.x - p.x) * Math.min(1, dt*12);
+              p.y += (p.target.y - p.y) * Math.min(1, dt*12);
+            } else {
+              p.vy += (p.g||0) * dt;
+              if (p.drag) { const f = Math.max(0, 1 - p.drag*dt); p.vx *= f; p.vy *= f; }
+              p.x += p.vx * dt; p.y += p.vy * dt;
+            }
+          }
+          particles = particles.filter(p => p.life < p.ttl);
+          for (const r of landRings) r.life += dt;
+          landRings = landRings.filter(r => r.life < r.ttl);
+        }
         // 足場生成タイマー（同時数と生成間隔の制御）
         let pfSpawnTimer = 0;
         let pfNextDelay = 1.8;
@@ -1471,6 +1687,15 @@
           state.fever = false;
           state.feverTime = 0;
           state.pickStreak = 0;
+          // 代謝リズム系のリセット
+          state.sugarBoost = 0;
+          state.feverFlash = 0;
+          state.feverRatio = 0;
+          state.insulin.active = false; state.insulin.t = 0;
+          particles = [];
+          landRings = [];
+          speech = { text: '', t: 0, dur: 0, color: '#fff', cd: 0 };
+          emoResetBG();
           state.scoredPids = new Set();
           initBG();
           // 縦画面（スマホ）向けに軽くスケーリング
@@ -1743,7 +1968,9 @@
               state.best = Number(localStorage.getItem('glucoseman_best')||state.best||0);
               state.lastScorePid = (data.state&&data.state.lastScorePid)||null;
               state.scoredPids = new Set((data.state&&data.state.scoredPids)||[]);
-  
+              // 背景は通常状態から再開（感情の風景システム）
+              emoResetBG();
+
               player.x = data.player.x; player.y = data.player.y; player.vx = data.player.vx; player.vy = data.player.vy;
               player.onGround = !!data.player.onGround; player.groundId = data.player.groundId; player.airJumpsLeft = data.player.airJumpsLeft||0;
   
@@ -1769,9 +1996,18 @@
 
         function startFever() {
           state.fever = true;
-          state.feverTime = 15.0;
+          state.feverDuration = 15.0;
+          state.feverTime = state.feverDuration;
+          state.feverRatio = 1;
+          state.feverFlash = 1; // 突入フラッシュ
+          // インスリン状態は高揚で吹き飛ぶ
+          state.insulin.active = false; state.insulin.t = 0;
           sfxPlay.fever();
           popups.push({x: (canvas.clientWidth/2)||160, y: 120, vx: 0, vy: -16, life: 0, text: 'FEVER!', color: '#ffd96a'});
+          gmSay('fever', { force: true, dur: 2.4, color: '#ffd96a' });
+          // 突入の光リング（プレイヤー中心）
+          const fcx = player.x + player.w/2, fcy = player.y + player.h*0.5;
+          landRings.push({ x: fcx, y: fcy, r0: 10, maxR: 120, life: 0, ttl: 0.6, color: '255,220,120', w: 4 });
           // 空中でも即座に2段ジャンプ可能にする
           player.airJumpsLeft = Math.max(player.airJumpsLeft, 1);
         }
@@ -1958,7 +2194,13 @@
             timeCtl.factor = timeCtl.from + (timeCtl.target - timeCtl.from) * p;
             if (p >= 1) { timeCtl.active = false; timeCtl.factor = timeCtl.target; }
           }
-          const dt = rawDt * Math.max(0.05, timeCtl.factor);
+          // インスリンスパイク：世界の時間だけをゆっくりに（BGMは別要素なので速度は変わらない）
+          {
+            const slowTarget = (state.insulin && state.insulin.active) ? 0.76 : 1.0;
+            insulinScale += (slowTarget - insulinScale) * Math.min(1, rawDt * 3.5); // なめらかに変化
+            if (Math.abs(insulinScale - slowTarget) < 0.002) insulinScale = slowTarget;
+          }
+          const dt = rawDt * Math.max(0.05, timeCtl.factor) * insulinScale;
 
           if (state.running && !state.paused) update(dt);
           // FPS計測（1.5秒ごとに評価してblurを縮小/無効化）
@@ -2057,10 +2299,10 @@
             window.__gmUnloadGuard = null;
           }
           
-          // フェーズ制御の更新
+          // フェーズ制御の更新（難易度用。BGM時間ベースのまま維持）
           updatePhase();
-          // 背景サブフェーズ（BGM時間）
-          updateBgVisual(dt);
+          // 背景は「感情の風景」として独立制御（BGM完全同期はやめた）
+          updateEmoBG(dt);
           
           // フェーズ変更演出の更新
           if (phaseTransition.active) {
@@ -2193,7 +2435,7 @@
           } else if (R) {
             dir = 1;
           }
-          player.vx = dir * player.speed;
+          player.vx = dir * player.speed * moveMul();
           player.x += player.vx * dt;
 
           // Wrap horizontally for flow
@@ -2235,7 +2477,7 @@
               }
             }
             if (canJump) {
-              player.vy = -world.jumpSpeed;
+              player.vy = -world.jumpSpeed * jumpMul();
               player.onGround = false;
               player.groundId = null;
               control.jumpBuf = 0;
@@ -2258,7 +2500,7 @@
           while (remain > 0) {
             const step = Math.min(maxStep, remain);
             const prevFoot = player.footY || (player.y + player.h);
-            player.vy = Math.min(world.maxFall, player.vy + world.gravity * step);
+            player.vy = Math.min(world.maxFall, player.vy + world.gravity * gravMul() * step);
             player.footY = prevFoot + player.vy * step;
             player.y = player.footY - player.h;
 
@@ -2369,6 +2611,14 @@
               if (!gpf.safe) {
                 if (firstOnThis) sfxPlay.firstLand();
                 else sfxPlay.land();
+                // 着地演出（光リング・粒子・軽いシェイク・浮遊ワード）。赤バー(safe)では出さない
+                const cxL = player.x + player.w/2;
+                const footL = player.footY || (player.y + player.h);
+                const mult = state.fever ? 6 : Math.max(1, state.comboMult);
+                spawnLandFx(cxL, footL, mult);
+                // コンボ着地はもっと喋る
+                if (mult >= 3) gmSay('combo', { dur: 1.8, color: '#a8ffcc' });
+                else if (Math.random() < 0.14) gmSay('land', { dur: 2.0 });
               }
             }
           }
@@ -2594,6 +2844,10 @@
             if (dx*dx + dy*dy <= (r*r)) {
               s.alive = false;
               state.sugars += 1;
+              // 糖は代謝のリズムを作る：取得で代謝（操作感）が高まる
+              state.sugarBoost = Math.min(1, state.sugarBoost + 0.34);
+              // 糖取得演出（キラキラ・吸い込み・小さな光の爆発）
+              spawnSugarFx(sx, sy);
               // コンボ処理
               if (!state.fever) {
                 // コンボ（スコア用）は継続
@@ -2604,6 +2858,7 @@
                 if (state.comboMult > prevMult) {
                   sfxPlay.combo();
                   popups.push({x: sx, y: sy, vx: 0, vy: -18, life: 0, text: `x${state.comboMult}!`, color: '#a8ffcc'});
+                  gmSay('combo', { dur: 1.8, color: '#a8ffcc' });
                 }
                 // 5個取得でスーパー（フィーバー）発動
                 state.pickStreak += 1;
@@ -2615,8 +2870,9 @@
             // スーパー中は時間延長なし（一定時間固定）
           }
               // スコアは足場着地でのみ加算。糖はカウントのみ。
-              sfxPlay.pick();
+              try { sfxPlay.sugar(); } catch(_) { sfxPlay.pick(); }
               popups.push({x: sx, y: sy, vx: (Math.random()*14-7), vy: -22, life: 0, text: `+糖` , color: '#ffe58a'});
+              if (Math.random() < 0.22) gmSay('sugar', { dur: 1.6, color: '#ffe58a' });
             }
           }
           // Cleanup sugars that went off screen or collected
@@ -2638,15 +2894,23 @@
             }
           } else {
             state.feverTime -= dt;
+            // フィーバー残量比（オーラ/ゲージ用）
+            state.feverRatio = Math.max(0, Math.min(1, state.feverTime / Math.max(0.001, state.feverDuration)));
             if (state.feverTime <= 0) {
               state.fever = false;
               state.comboCount = 0;
               state.comboMult = 1;
+              state.feverRatio = 0;
               // フィーバー終了と共に空中での2段ジャンプ権を削除
               if (!player.onGround && !(state.power && state.power.kind)) player.airJumpsLeft = 0;
               state.pickStreak = 0;
+              // 高揚のあとの静けさ：インスリンスパイク発生
+              startInsulin();
             }
           }
+
+          // 代謝演出（糖ブースト減衰・インスリン・粒子・リング・セリフ）
+          updateMetabFx(dt);
 
           // ポップアップ更新
           for (const p of popups) {
@@ -2714,16 +2978,20 @@
             ctx.translate(shakeX, shakeY);
           }
           
-          // === 背景描画（サブフェーズ対応・スライド＋フェード） ===
-          const drawBgStepLayer = (step, alpha=1, offsetY=0) => {
-            const idx = Math.max(1, Math.min(7, step)) - 1;
-            const img = BG_STEP_IMAGES[idx];
+          // === 背景描画（絵巻物スクロール・クロスフェード）===
+          // 縦長画像を「幅フィット（横歪みなし）」で描き、上→下へ最後まで流し切る。
+          const drawEmoLayer = (key, alpha, panFrac) => {
+            const img = EMO_BG[key];
             const ready = !!(img && img.complete && (img.naturalWidth || 0) > 0);
             ctx.save();
-            ctx.translate(0, offsetY);
             ctx.globalAlpha *= alpha;
             if (ready) {
-              ctx.drawImage(img, 0, 0, W, H);
+              const iw = img.naturalWidth, ih = img.naturalHeight;
+              const scale = W / iw;          // 幅に合わせる＝横方向は歪まない
+              const dw = W, dh = ih * scale;
+              // panFrac 0→1 で、画像の最上部→最下部までを必ず見せる（絵巻物の旅）
+              const oy = (dh > H) ? (H - dh) * Math.max(0, Math.min(1, panFrac)) : (H - dh) / 2;
+              ctx.drawImage(img, 0, Math.floor(oy), Math.ceil(dw), Math.ceil(dh));
             } else {
               const grad = ctx.createLinearGradient(0, 0, 0, H);
               grad.addColorStop(0, '#bfe1ff');
@@ -2734,16 +3002,20 @@
             ctx.restore();
           };
 
-          if (bgVisual.trans && bgVisual.trans.active) {
-            // 同時スクロール（一定速度・ぼかしなし）
-            const p = Math.max(0, Math.min(1, bgVisual.trans.t / Math.max(0.001, bgVisual.trans.dur)));
-            const yOld = Math.floor(-p * H);     // 0 → -H
-            const yNew = Math.floor(H - p * H);  // H → 0
-            drawBgStepLayer(bgVisual.trans.from.step, 1.0, yOld);
-            drawBgStepLayer(bgVisual.trans.to.step, 1.0, yNew);
+          // フィーバー中は景色そのものが覚醒：彩度と明度を少し上げて描く
+          const _emoFilterOn = (state.fever && typeof ctx.filter === 'string');
+          if (_emoFilterOn) { try { ctx.filter = 'saturate(1.4) brightness(1.06)'; } catch(_){} }
+
+          const curPan = Math.min(1, emoBG.panT / Math.max(0.001, emoBG.dur));
+          if (emoBG.trans && emoBG.trans.active) {
+            const p = Math.max(0, Math.min(1, emoBG.trans.t / Math.max(0.001, emoBG.trans.dur)));
+            const e = (p < 0.5) ? (2*p*p) : (1 - Math.pow(-2*p + 2, 2) / 2); // easeInOut クロスフェード
+            drawEmoLayer(emoBG.trans.from, 1.0, emoBG.trans.fromPan); // 旧景色（流し切った位置で静止）
+            drawEmoLayer(emoBG.trans.to, e, curPan);                  // 新景色を重ねてフェードイン
           } else {
-            drawBgStepLayer(bgVisual.step, 1.0, 0);
+            drawEmoLayer(emoBG.cur, 1.0, curPan);
           }
+          if (_emoFilterOn) { try { ctx.filter = 'none'; } catch(_){} }
 
           // 天蓋描画は無効化（直線/ドームなし）
 
@@ -3069,6 +3341,170 @@
             final:  '夢の楽園 ― 夢の楽園'
           };
           hud.textContent = `フェーズ: ${phaseLabelsHUD2[currentPhase]||currentPhase} ／ スコア: ${state.score}`;
+
+          // === 代謝演出レイヤー（インスリン/フィーバー/リング/粒子/オーラ/ゲージ/セリフ）===
+          // インスリンスパイク：景色はそのまま、青紫の淡いフィルターと「呼吸するような明滅」
+          if (state.insulin.active) {
+            const k = insulinK(); // 1→0
+            const breathe = 0.5 + 0.5 * Math.sin(state.time * 2.0); // ゆっくり呼吸
+            const env = 0.45 + 0.55 * k;                            // 開始で濃く、回復で薄く
+            const a = (0.13 + 0.07 * breathe) * env;
+            ctx.save();
+            const g = ctx.createLinearGradient(0, 0, 0, H);
+            g.addColorStop(0, `rgba(120,110,200,${a*0.95})`);  // 青紫
+            g.addColorStop(1, `rgba(60,55,120,${a})`);
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, W, H);
+            // 画面端のまどろみビネット
+            const vg = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.35, W/2, H/2, Math.max(W,H)*0.7);
+            vg.addColorStop(0, 'rgba(0,0,0,0)');
+            vg.addColorStop(1, `rgba(35,30,70,${a*1.15})`);
+            ctx.fillStyle = vg;
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+          }
+          // フィーバー覚醒演出（背景は変えず、景色そのものが目覚めたように）
+          if (state.fever) {
+            const t = state.time;
+            ctx.save();
+            // 画面端の淡い暖色発光
+            const eg = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.40, W/2, H/2, Math.max(W,H)*0.64);
+            eg.addColorStop(0, 'rgba(255,235,150,0)');
+            eg.addColorStop(1, `rgba(255,210,110,${0.16 + 0.05 * Math.sin(t*6)})`);
+            ctx.fillStyle = eg;
+            ctx.fillRect(0, 0, W, H);
+            // 軽い速度線（縦の淡いストリークが上へ流れる＝高揚感）
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.strokeStyle = 'rgba(255,245,200,0.10)';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 6; i++) {
+              const x = ((i * 131 + t * 220) % (W + 40)) - 20;
+              const len = 60 + ((i * 53) % 80);
+              const y = (H + len) - ((i * 197 + t * 300) % (H + len));
+              ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - len); ctx.stroke();
+            }
+            ctx.restore();
+          }
+          // フィーバー突入フラッシュ
+          if (state.feverFlash > 0) {
+            ctx.save();
+            ctx.fillStyle = `rgba(255,245,200,${0.5 * state.feverFlash})`;
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+          }
+          // 光リング（着地・糖・フィーバー）
+          for (const rg of landRings) {
+            const k = Math.min(1, rg.life / rg.ttl);
+            const ease = 1 - Math.pow(1 - k, 2);
+            const cur = rg.r0 + (rg.maxR - rg.r0) * ease;
+            const alpha = Math.max(0, 1 - k);
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.strokeStyle = `rgba(${rg.color},${alpha * 0.9})`;
+            ctx.lineWidth = rg.w * (1 - k*0.6);
+            ctx.beginPath();
+            ctx.arc(rg.x, rg.y, cur, 0, Math.PI*2);
+            ctx.stroke();
+            ctx.restore();
+          }
+          // 粒子（キラキラ）
+          if (particles.length) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            for (const p of particles) {
+              const k = Math.min(1, p.life / p.ttl);
+              const alpha = Math.max(0, 1 - k);
+              ctx.globalAlpha = alpha;
+              ctx.fillStyle = p.color;
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, p.r * (1 - k*0.4), 0, Math.PI*2);
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+          // フィーバーオーラ（プレイヤーの周り）
+          if (state.fever && !(state.power && state.power.kind)) {
+            const cx = player.x + player.w/2;
+            const cy = (player.footY || (player.y + player.h)) - player.h/2;
+            const rr = Math.max(player.w, player.h);
+            const pulse = 0.5 + 0.5 * Math.sin(state.time * 9);
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            const gg = ctx.createRadialGradient(cx, cy, 8, cx, cy, rr * (0.8 + 0.12*pulse));
+            gg.addColorStop(0, 'rgba(255,235,150,0.30)');
+            gg.addColorStop(1, 'rgba(255,210,90,0)');
+            ctx.fillStyle = gg;
+            ctx.beginPath(); ctx.arc(cx, cy, rr*0.95, 0, Math.PI*2); ctx.fill();
+            // 回転する甘さのリング
+            ctx.strokeStyle = `rgba(255,240,180,${0.4 + 0.3*pulse})`;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath(); ctx.arc(cx, cy, rr*0.62, 0, Math.PI*2); ctx.stroke();
+            ctx.restore();
+          }
+          // コンボ継続ゲージ／フィーバー残り時間ゲージ（HUD下・中央寄せ）
+          (function drawMetabGauges(){
+            const barW = Math.min(W*0.6, 260), barH = 8, bx = (W - barW)/2;
+            if (state.fever) {
+              const by = 44;
+              const ratio = Math.max(0, Math.min(1, state.feverRatio));
+              ctx.save();
+              ctx.fillStyle = 'rgba(0,0,0,0.28)';
+              ctx.fillRect(bx, by, barW, barH);
+              const g = ctx.createLinearGradient(bx, 0, bx+barW, 0);
+              g.addColorStop(0, '#ffd96a'); g.addColorStop(1, '#aaffcc');
+              ctx.fillStyle = g;
+              ctx.fillRect(bx, by, barW * ratio, barH);
+              ctx.fillStyle = '#fff7d0';
+              ctx.font = 'bold 13px system-ui, sans-serif';
+              ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+              ctx.fillText('FEVER', W/2, by - 2);
+              ctx.restore();
+            } else if (state.comboCount > 0) {
+              const by = 44;
+              const ratio = Math.max(0, Math.min(1, state.comboTime / Math.max(0.001, state.comboWindow)));
+              ctx.save();
+              ctx.fillStyle = 'rgba(0,0,0,0.25)';
+              ctx.fillRect(bx, by, barW, barH);
+              ctx.fillStyle = '#a8ffcc';
+              ctx.fillRect(bx, by, barW * ratio, barH);
+              ctx.restore();
+            }
+          })();
+          // 大型コンボ表示
+          if (!state.fever && state.comboMult > 1) {
+            ctx.save();
+            const pop = 1 + 0.06 * Math.sin(state.time * 8);
+            ctx.translate(W/2, 92);
+            ctx.scale(pop, pop);
+            ctx.fillStyle = 'rgba(168,255,204,0.95)';
+            ctx.font = 'bold 40px system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(0,80,40,0.5)'; ctx.shadowBlur = 8;
+            ctx.fillText(`COMBO x${state.comboMult}`, 0, 0);
+            ctx.restore();
+          }
+          // グルコースマンのセリフ（吹き出し）
+          if (speech.dur > 0 && speech.text) {
+            const k = speech.t / Math.max(0.001, speech.dur);
+            const alpha = (k < 0.12) ? (k/0.12) : (k > 0.8 ? Math.max(0, 1-(k-0.8)/0.2) : 1);
+            const cx = player.x + player.w/2;
+            const cyTop = (player.footY || (player.y + player.h)) - player.h - 14;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.font = 'bold 19px system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            const tw = ctx.measureText(speech.text).width;
+            const padX = 12, bw = tw + padX*2, bh = 30;
+            let bxs = cx - bw/2;
+            bxs = Math.max(8, Math.min(W - bw - 8, bxs)); // 画面内に収める
+            const bys = Math.max(70, cyTop - bh);
+            ctx.fillStyle = 'rgba(20,24,40,0.62)';
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bxs, bys, bw, bh, 10); ctx.fill(); }
+            else { ctx.fillRect(bxs, bys, bw, bh); }
+            ctx.fillStyle = speech.color || '#fff';
+            ctx.fillText(speech.text, bxs + bw/2, bys + bh/2 + 1);
+            ctx.restore();
+          }
 
           // ポップアップ描画
           for (const p of popups) {
