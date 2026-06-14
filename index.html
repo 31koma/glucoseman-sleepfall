@@ -1049,39 +1049,197 @@
           im.src = 'assets/' + k + '.png';
           EMO_BG[k] = im;
         });
-        // 採用順（全12枚・絵巻物の旅路：明→暗＝空から深海へ降り、ループで再び空へ）
-        const EMO_ORDER = ['bg01','bg02','bg03','bg04','bg05','bg06','bg07','bg08','bg09','bg10','bg11','bg12','bg13','bg14','bg15'];
-        const BG_SCROLL = 26; // 背景の縦スクロール速度(px/s)。一定速度で「旅をしている」動きをはっきり出す
-        const emoBG = {
-          idx: 0,
-          cur: EMO_ORDER[0],
-          panPx: 0,                // 現在背景の縦スクロール経過(px)
-          curRange: 300,           // 現在背景の可動域(px)。描画時に実値を書き戻す
-          trans: { active: false, t: 0, dur: 2.4, from: EMO_ORDER[0], to: EMO_ORDER[0], fromPan: 1 },
+        // === フェーズ別の背景割り当て（BGM時間基準・フェーズをまたがない）===
+        // phase1:背景1-4 / phase2:背景5-8 / phase3:背景9-11 / final:背景12-15
+        const PHASE_BG = {
+          phase1: ['bg01','bg02','bg03','bg04'],
+          phase2: ['bg05','bg06','bg07','bg08'],
+          phase3: ['bg09','bg10','bg11'],
+          final:  ['bg12','bg13','bg14','bg15'],
         };
-        function emoCurFrac() { return emoBG.curRange > 0 ? Math.min(1, emoBG.panPx / emoBG.curRange) : 0; }
+        // フェーズ境界（BGM秒）。finalは終曲まで（BGM長さ or フォールバック）
+        const PHASE_BOUNDS = [
+          { name: 'phase1', start: 0,   end: 350 },
+          { name: 'phase2', start: 350, end: 630 },
+          { name: 'phase3', start: 630, end: 955 },
+          { name: 'final',  start: 955, end: Infinity },
+        ];
+        const emoBG = {
+          cur: 'bg01',
+          panFrac: 0,              // 現在背景の縦スクロール進捗(0=上→1=下)。スロット時間で進む
+          lastFrac: 0,
+          curRange: 300,
+          trans: { active: false, t: 0, dur: 2.0, from: 'bg01', to: 'bg01', fromPan: 1 },
+        };
+        function emoCurFrac() { return emoBG.panFrac; }
         function emoResetBG() {
-          emoBG.idx = 0; emoBG.cur = EMO_ORDER[0]; emoBG.panPx = 0; emoBG.curRange = 300;
+          emoBG.cur = 'bg01'; emoBG.panFrac = 0; emoBG.lastFrac = 0; emoBG.curRange = 300;
           emoBG.trans.active = false; emoBG.trans.t = 0;
-          emoBG.trans.from = EMO_ORDER[0]; emoBG.trans.to = EMO_ORDER[0]; emoBG.trans.fromPan = 0;
+          emoBG.trans.from = 'bg01'; emoBG.trans.to = 'bg01'; emoBG.trans.fromPan = 0;
         }
-        function emoAdvance() {
-          const nextIdx = (emoBG.idx + 1) % EMO_ORDER.length;
-          emoBG.trans.active = true; emoBG.trans.t = 0; emoBG.trans.dur = 2.4; // クロスフェード
-          emoBG.trans.from = emoBG.cur;
-          emoBG.trans.fromPan = emoCurFrac();
-          emoBG.trans.to = EMO_ORDER[nextIdx];
-          emoBG.idx = nextIdx; emoBG.cur = EMO_ORDER[nextIdx]; emoBG.panPx = 0;
+        function emoBgmTime() {
+          return (bgmEl && isFinite(bgmEl.currentTime || NaN)) ? (bgmEl.currentTime || 0) : (state.time || 0);
+        }
+        // BGM時間 → そのフェーズの背景キーと縦スクロール進捗を算出
+        function emoComputeTarget(t) {
+          let ph = PHASE_BOUNDS[0];
+          for (const b of PHASE_BOUNDS) { if (t >= b.start) ph = b; }
+          const list = PHASE_BG[ph.name] || ['bg01'];
+          let end = ph.end;
+          if (!isFinite(end)) { // final：BGM長さがあればそれを、無ければ1枚80秒で仮置き
+            const d = (bgmEl && isFinite(bgmEl.duration || NaN) && bgmEl.duration > ph.start + 10)
+                      ? bgmEl.duration : (ph.start + list.length * 80);
+            end = d;
+          }
+          const phaseLen = Math.max(1, end - ph.start);
+          const slot = phaseLen / list.length;       // 1枚あたりの表示時間（フェーズ時間に自動追従）
+          let rel = t - ph.start;
+          let idx = Math.floor(rel / slot);
+          if (idx < 0) idx = 0;
+          if (idx >= list.length) idx = list.length - 1; // フェーズ末はそのフェーズ最後の背景で待機
+          const frac = Math.max(0, Math.min(1, (rel - idx * slot) / slot)); // スロット内を上→下へ
+          return { key: list[idx], frac, phase: ph.name };
         }
         function updateEmoBG(dt) {
+          const t = emoBgmTime();
+          const tgt = emoComputeTarget(t);
+          // 背景が変わったらクロスフェード（フェーズ変更・ループ時も自然に切替）
+          if (tgt.key !== emoBG.cur && !emoBG.trans.active) {
+            emoBG.trans.active = true; emoBG.trans.t = 0; emoBG.trans.dur = 2.0;
+            emoBG.trans.from = emoBG.cur; emoBG.trans.fromPan = emoBG.lastFrac;
+            emoBG.trans.to = tgt.key; emoBG.cur = tgt.key;
+          }
+          emoBG.panFrac = tgt.frac;
+          emoBG.lastFrac = tgt.frac;
           if (emoBG.trans.active) {
             emoBG.trans.t += dt;
             if (emoBG.trans.t >= emoBG.trans.dur) emoBG.trans.active = false;
           }
-          // 一定速度で縦スクロール（フィーバー/インスリン中も景色は同じものを流し続ける）
-          emoBG.panPx += BG_SCROLL * dt;
-          // 現在画像を可動域いっぱいまで流し切ったら、次の景色へクロスフェード
-          if (!emoBG.trans.active && emoBG.curRange > 0 && emoBG.panPx >= emoBG.curRange) emoAdvance();
+        }
+
+        // ===================================================================
+        // === 背景に浮かぶ文字（薄く・ゆっくり・フェードイン/アウト）===
+        // フェーズごとに意味を持たせる。主張しすぎず、でも読める。
+        // ===================================================================
+        const FLOAT_WORDS = {
+          // phase1：現世のうつしよ（情報に囲まれた現実・ノイズ）
+          phase1: ['NEWS','NULL','通知','SNS','既読','AI','TREND','解像度','誰かの正解','比較','最適化','検索'],
+          // phase2：問い（プレイヤーへ語りかける）
+          phase2: ['夢とは何か？','現実とは何か？','現実と夢の違いは？','夢はブロックチェーンなのか？',
+                   '記憶は誰のもの？','AIは夢を見るのか？','本当の自分とは？','情報は真実なのか？',
+                   'あなたは今、起きている？','誰が夢を見ている？'],
+          // phase3：受容（安心できる言葉）
+          phase3: ['焦らなくていい','休んでもいい','通知は後でいい','呼吸してる？','音を聴こう',
+                   '景色を見よう','今ここ','ゆっくりでいい','少し休もう','また歩こう'],
+          // final：会話で扱うため浮遊文字は出さない
+          final: [],
+        };
+        let floatWords = [];
+        let floatSpawnT = 2.0;
+        function floatWordsReset() { floatWords = []; floatSpawnT = 2.0; }
+        function updateFloatWords(dt) {
+          const list = FLOAT_WORDS[currentPhase] || [];
+          floatSpawnT -= dt;
+          if (floatSpawnT <= 0 && list.length) {
+            // phase2(問い)は少しゆっくり・間を空けて、語りかけるように
+            floatSpawnT = (currentPhase === 'phase2') ? (4.5 + Math.random()*3.5) : (3.2 + Math.random()*2.8);
+            const W = canvas.clientWidth || 320, H = canvas.clientHeight || 600;
+            const text = list[(Math.random()*list.length)|0];
+            floatWords.push({
+              text,
+              x: W * (0.16 + Math.random()*0.68),
+              y: H * (0.20 + Math.random()*0.5),
+              vx: (Math.random()*8 - 4),
+              vy: -(5 + Math.random()*8),       // ゆっくり上へ漂う
+              life: 0,
+              ttl: (currentPhase === 'phase2') ? (6.5 + Math.random()*2.5) : (5.5 + Math.random()*2.5),
+              fs: (currentPhase === 'phase1') ? (28) : (currentPhase === 'phase2' ? 24 : 26),
+            });
+          }
+          for (const w of floatWords) { w.life += dt; w.x += w.vx*dt; w.y += w.vy*dt; }
+          floatWords = floatWords.filter(w => w.life < w.ttl);
+        }
+        function drawFloatWords(ctx, W, H) {
+          if (!floatWords.length) return;
+          ctx.save();
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          for (const w of floatWords) {
+            const k = w.life / w.ttl;
+            const fade = (k < 0.22) ? (k/0.22) : (k > 0.78 ? (1-k)/0.22 : 1); // フェードイン/アウト
+            const peak = (currentPhase === 'phase2') ? 0.34 : 0.28;           // 薄く・主張しすぎない
+            ctx.globalAlpha = Math.max(0, fade) * peak;
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `600 ${w.fs}px system-ui, -apple-system, sans-serif`;
+            ctx.fillText(w.text, w.x, w.y);
+          }
+          ctx.restore();
+        }
+
+        // ===================================================================
+        // === final：エンディング会話の受け皿（後から歌詞を元に差し替え）===
+        // 歌詞確定後に ENDING_DIALOGUES へ { speaker:'gluco'|'kataan', text, dur } を流し込む。
+        // 今は空配列なので何も再生されない（構造のみ用意）。
+        // ===================================================================
+        // 楽曲「行こうぜ 夢の中へ」を元にした二人の会話（finalで順に再生）
+        const ENDING_DIALOGUES = [
+          { speaker: 'gluco',  text: '胸の鼓動が、まだ鳴ってる。', dur: 3.4 },
+          { speaker: 'kataan', text: '通知は……もう、来ないみたいだ。', dur: 3.4 },
+          { speaker: 'gluco',  text: '今日の悩みは、眠れば消えるってさ。', dur: 3.6 },
+          { speaker: 'kataan', text: 'ほんとに消えるのかな。', dur: 3.0 },
+          { speaker: 'gluco',  text: '目を閉じたなら、新しい世界。', dur: 3.4 },
+          { speaker: 'kataan', text: 'ねえ、ぼくら今、起きてる？', dur: 3.2 },
+          { speaker: 'gluco',  text: '眠ってると、起きてる。どっちが夢だろうね。', dur: 3.8 },
+          { speaker: 'kataan', text: '月はね、近づいても永遠に近づけないんだって。', dur: 3.8 },
+          { speaker: 'gluco',  text: 'トラス構造……なんてね。', dur: 3.2 },
+          { speaker: 'kataan', text: '笑ってりゃ、運気近づくか。', dur: 3.2 },
+          { speaker: 'gluco',  text: '行こうぜ、壁を越えて。朝まで。', dur: 3.4 },
+          { speaker: 'kataan', text: '奈落にダイブ。深く、もっと深く。', dur: 3.4 },
+          { speaker: 'gluco',  text: '笑顔のままで、どこまでも。', dur: 3.4 },
+          { speaker: 'kataan', text: 'この不安定な、完璧な世界で。', dur: 3.6 },
+          { speaker: 'gluco',  text: 'この不条理な、完璧な世界で。', dur: 3.6 },
+          { speaker: 'kataan', text: '……案外、悪くないな。', dur: 3.6 },
+        ];
+        let endingIdx = 0, endingGap = 2.0;
+        let endingCur = null, endingCurT = 0, endingCurDur = 0;
+        function endingReset() { endingIdx = 0; endingGap = 2.0; endingCur = null; endingCurT = 0; endingCurDur = 0; }
+        function updateEndingDialogue(dt) {
+          if (currentPhase !== 'final' || !ENDING_DIALOGUES.length) { endingCur = null; return; }
+          if (endingCur) {
+            endingCurT += dt;
+            if (endingCurT >= endingCurDur) { endingCur = null; endingGap = 0.8; }
+          } else {
+            endingGap -= dt;
+            if (endingGap <= 0 && endingIdx < ENDING_DIALOGUES.length) {
+              endingCur = ENDING_DIALOGUES[endingIdx++];
+              endingCurT = 0; endingCurDur = (endingCur && endingCur.dur) || 3.4;
+            }
+          }
+        }
+        function drawEndingDialogue(ctx, W, H) {
+          if (!endingCur || !endingCur.text) return;
+          const k = endingCurT / Math.max(0.001, endingCurDur);
+          const fade = (k < 0.15) ? (k/0.15) : (k > 0.85 ? (1-k)/0.15 : 1);
+          const isK = endingCur.speaker === 'kataan';
+          const name = isK ? '情報カターン' : 'グルコースマン';
+          const nameCol = isK ? '#9fe0ff' : '#ffe6a0';
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, fade);
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          // 本文サイズを画面幅に収める
+          let fs = 18;
+          const maxW = W - 40;
+          ctx.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
+          while (fs > 12 && ctx.measureText(endingCur.text).width > maxW) { fs -= 1; ctx.font = `bold ${fs}px system-ui, -apple-system, sans-serif`; }
+          const tw = ctx.measureText(endingCur.text).width;
+          const bw = Math.min(W - 16, Math.max(tw + 32, 170)), bh = 56;
+          const bx = (W - bw) / 2, by = Math.floor(H * 0.60);
+          ctx.fillStyle = 'rgba(15,18,32,0.6)';
+          if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 12); ctx.fill(); } else ctx.fillRect(bx, by, bw, bh);
+          ctx.fillStyle = nameCol; ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+          ctx.fillText(name, W/2, by + 14);
+          ctx.fillStyle = '#ffffff'; ctx.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
+          ctx.fillText(endingCur.text, W/2, by + 36);
+          ctx.restore();
         }
 
         // キャラスプライト（任意）：assets/normal.png（通常）、assets/sleep.png（ゲームオーバー／赤バー上）
@@ -2113,6 +2271,8 @@
           landRings = [];
           speech = { text: '', t: 0, dur: 0, color: '#fff', cd: 0 };
           emoResetBG();
+          floatWordsReset();
+          endingReset();
           kataanReset();
           oyasumiReset();
           platFinalT0 = null;
@@ -2401,6 +2561,8 @@
               state.scoredPids = new Set((data.state&&data.state.scoredPids)||[]);
               // 背景は通常状態から再開（感情の風景システム）
               emoResetBG();
+              floatWordsReset();
+              endingReset();
               kataanReset();
               oyasumiReset();
               platFinalT0 = null;
@@ -2731,6 +2893,10 @@
           updatePhase();
           // 背景は「感情の風景」として独立制御（BGM完全同期はやめた）
           updateEmoBG(dt);
+          // 背景に浮かぶ文字（フェーズ別）
+          updateFloatWords(dt);
+          // final：エンディング会話（受け皿。空なら何もしない）
+          updateEndingDialogue(dt);
           // 情報カターン（もうひとりの主人公）の飛行
           updateKataan(dt);
           // おやすみカターン（休憩の避難所）
@@ -3526,6 +3692,9 @@
           if (_emoRange != null && _emoRange > 0) emoBG.curRange = _emoRange;
           if (_emoFilterOn) { try { ctx.filter = 'none'; } catch(_){} }
 
+          // 背景に浮かぶ文字（背景の一部として、プレイより背面に薄く描く）
+          drawFloatWords(ctx, W, H);
+
           // 天蓋描画は無効化（直線/ドームなし）
 
           // Subtle grid for depth
@@ -3953,6 +4122,9 @@
           }
           // 情報カターン（もうひとりの主人公）を描画
           drawKataan(ctx, W, H);
+
+          // final：二人のエンディング会話（字幕風・中央下）
+          drawEndingDialogue(ctx, W, H);
 
           // 残機表示（画面上部・右端に小さく）：アイコン× N
           {
