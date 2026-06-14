@@ -1091,7 +1091,17 @@
         charSpriteSleep.onload = () => { charSpriteSleepReady = true; };
         charSpriteSleep.onerror = () => { try { if (charSpriteSleep && charSpriteSleep.src && charSpriteSleep.src.indexOf(PLAYER_IMG) !== -1) { charSpriteSleep.src = PLAYER_FALLBACK; } } catch(_){} charSpriteSleepReady = false; };
         charSpriteSleep.src = PLAYER_IMG;
-        
+
+        // グルコースマン 左右向き素材（操作方向に合わせて差し替え／反転なし）
+        const GLUCO_R = new Image(); let glucoRReady = false;
+        GLUCO_R.onload = () => { glucoRReady = true; };
+        GLUCO_R.onerror = () => { glucoRReady = false; };
+        GLUCO_R.src = 'assets/glucoseman_right.png';
+        const GLUCO_L = new Image(); let glucoLReady = false;
+        GLUCO_L.onload = () => { glucoLReady = true; };
+        GLUCO_L.onerror = () => { glucoLReady = false; };
+        GLUCO_L.src = 'assets/glucoseman_left.png';
+
         // ベッドスプライト（赤いバー代替）
         const bedSprite = new Image();
         let bedSpriteReady = false;
@@ -1488,6 +1498,7 @@
           onGround: false,
           groundId: null,
           airJumpsLeft: 0,
+          facing: 1, // 1=右向き / -1=左向き（最後に入力した方向を維持）
           transformScaleMul: 1.0, // 変身での追加スケール
           // 当たり判定を上にずらす割合（プレイヤー高さに対する比率）
           hitboxOffsetYRatio: 0.18,
@@ -1715,6 +1726,137 @@
           }
         }
 
+        // =====================================================================
+        // === おやすみカターン：休んでいい、を伝える小さな避難所（別管理）===
+        // 既存の足場処理を流用（safe足場＝無加点・無消滅・非スクロール）。
+        // 乗っている間は落下ミスが起きず（非スクロール足場）、コンボを維持する。
+        // =====================================================================
+        const OYASUMI_IMG = new Image(); OYASUMI_IMG.src = 'assets/oyasumi_kataan.png';
+        const OYASUMI_APPEAR = ['☁️ おやすみカターン出現', '🔕 通知オフタイム', '☕ ちょっと一息', '🎵 音楽でも聴こう'];
+        const OYASUMI_LEAVE  = ['☁️ そろそろ出発の時間', '🔔 通知が戻ってくるよ', 'また休みにおいで', '行ってらっしゃい'];
+        const GM_REST_LINES  = ['ここ、落ち着くなぁ。', 'ちょっと休もうか。', '急がなくてええんやな。', '景色、綺麗やな。'];
+        const OYA_REST_LINES = ['通知は後でいいよ。', '今は休憩。', '焦らなくて大丈夫。', '音楽を楽しもう。'];
+        let oyasumiRef = null;     // 現在の足場参照（platforms内）
+        let oyasumiSched = 40;     // 次の出現までの秒
+        let oyasumiSayT = 0;       // 滞在中セリフのタイマー
+        function oyasumiReset() {
+          if (oyasumiRef) { try { platforms = platforms.filter(x => x.id !== oyasumiRef.id); } catch(_){} }
+          oyasumiRef = null; oyasumiSched = 30 + Math.random() * 25; oyasumiSayT = 0;
+        }
+        function oyasumiSpawn() {
+          const Wc = (canvas && canvas.clientWidth) || 320;
+          const Hc = (canvas && canvas.clientHeight) || 600;
+          const imgW = Math.min(Wc * 0.72, 420);
+          const imgH = imgW * (1024 / 1536);
+          const standW = imgW * 0.46;                       // 乗れる面の幅
+          const cx = Wc * 0.30 + Math.random() * (Wc * 0.40);
+          const baseY = Hc * (0.26 + Math.random() * 0.18); // 上部〜中段
+          const pf = {
+            id: platformIdCounter++, safe: true, oyasumi: true,
+            x: Math.round(cx - standW/2), y: Math.round(baseY),
+            w: Math.round(standW), h: 18,
+            oy: { phase: 'enter', t: 0, alpha: 0, baseY: Math.round(baseY), imgW, imgH,
+                  dur: 9.5 + Math.random() * 2.5, say: null, sayT: 0 }
+          };
+          platforms.push(pf);
+          oyasumiRef = pf;
+          oyasumiSayT = 2.4;
+          popups.push({ x: Wc/2, y: Math.max(40, baseY - imgH*0.5), vx: 0, vy: -10, life: 0,
+                        text: OYASUMI_APPEAR[(Math.random()*OYASUMI_APPEAR.length)|0], color: '#bfe6ff' });
+        }
+        function updateOyasumi(dt) {
+          if (!oyasumiRef) {
+            if (!state.activated) return;                   // 赤バー期は出さない（重ならない）
+            oyasumiSched -= dt;
+            if (oyasumiSched <= 0) {
+              const nearFinal = (currentPhase === 'final') || ((state.time||0) >= 840);
+              oyasumiSpawn();                                // 低確率＝長い間隔で稀に出現
+              oyasumiSched = nearFinal ? (30 + Math.random()*25) : (45 + Math.random()*35);
+            }
+            return;
+          }
+          const pf = oyasumiRef, oy = pf.oy;
+          oy.t += dt;
+          const riding = (player.onGround && player.groundId === pf.id);
+          if (riding) {
+            state.comboTime = state.comboWindow;            // コンボ維持（落下ミスは非スクロール足場で自然に回避）
+            oyasumiSayT -= dt;
+            if (oyasumiSayT <= 0) {
+              if (Math.random() < 0.5) {
+                const l = GM_REST_LINES[(Math.random()*GM_REST_LINES.length)|0];
+                speech.text = l; speech.dur = 2.2; speech.t = 0; speech.color = '#cfe8ff'; speech.cd = 2.4;
+              } else {
+                oy.say = OYA_REST_LINES[(Math.random()*OYA_REST_LINES.length)|0]; oy.sayT = 2.4;
+              }
+              oyasumiSayT = 3.0 + Math.random() * 2;
+            }
+          }
+          if (oy.say) { oy.sayT -= dt; if (oy.sayT <= 0) oy.say = null; }
+          // ライフサイクル
+          if (oy.phase === 'enter') {
+            oy.alpha = Math.min(1, oy.alpha + dt / 1.0);
+            pf.y = Math.round(oy.baseY - (1 - Math.min(1, oy.t/1.0)) * 26); // 上から静かに降りてくる
+            if (oy.t >= 1.0) { oy.phase = 'stay'; oy.t = 0; oy.alpha = 1; pf.y = oy.baseY; }
+          } else if (oy.phase === 'stay') {
+            oy.alpha = 1;
+            pf.y = Math.round(oy.baseY + Math.sin(state.time * 1.6) * 2); // ふわふわ
+            if (oy.t >= oy.dur) {
+              oy.phase = 'leave'; oy.t = 0;
+              popups.push({ x: (canvas.clientWidth||320)/2, y: Math.max(40, oy.baseY - oy.imgH*0.5), vx: 0, vy: -10,
+                            life: 0, text: OYASUMI_LEAVE[(Math.random()*OYASUMI_LEAVE.length)|0], color: '#ffe0a0' });
+            }
+          } else if (oy.phase === 'leave') {
+            const p = Math.min(1, oy.t / 2.0);              // 2秒かけて静かに浮かんで消える
+            oy.alpha = 1 - p;
+            pf.y = Math.round(oy.baseY - p * 34);
+            if (oy.t >= 2.0) {
+              platforms = platforms.filter(x => x.id !== pf.id);
+              oyasumiRef = null;
+              oyasumiSched = Math.max(oyasumiSched, 30 + Math.random() * 25); // 連続出現禁止
+            }
+          }
+        }
+        function drawOyasumi(ctx) {
+          const pf = oyasumiRef; if (!pf) return;
+          const oy = pf.oy;
+          const ready = !!(OYASUMI_IMG && OYASUMI_IMG.complete && (OYASUMI_IMG.naturalWidth||0) > 0);
+          const dw = oy.imgW, dh = oy.imgH;
+          const cx = pf.x + pf.w/2;
+          const dy = pf.y - dh * 0.40;  // 足場上端を雲の座面に合わせる
+          const dx = cx - dw/2;
+          const a = Math.max(0, Math.min(1, oy.alpha));
+          ctx.save();
+          ctx.globalAlpha *= a;
+          // やわらかな光の土台
+          const g = ctx.createRadialGradient(cx, pf.y + dh*0.08, 10, cx, pf.y + dh*0.08, dw*0.55);
+          g.addColorStop(0, 'rgba(255,245,200,0.18)'); g.addColorStop(1, 'rgba(255,245,200,0)');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, pf.y + dh*0.08, dw*0.55, 0, Math.PI*2); ctx.fill();
+          if (ready) ctx.drawImage(OYASUMI_IMG, Math.round(dx), Math.round(dy), Math.round(dw), Math.round(dh));
+          ctx.restore();
+          // 通知OFF／音楽マークがゆっくり漂う
+          ctx.save();
+          ctx.globalAlpha *= a * 0.9;
+          ctx.font = '20px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          const driftY = pf.y - dh*0.46 + Math.sin(state.time*1.2)*6;
+          ctx.fillText('🔕', cx - dw*0.34, driftY);
+          ctx.fillText('🎵', cx + dw*0.34, driftY + Math.cos(state.time*1.1)*5);
+          ctx.restore();
+          // おやすみカターンのセリフ
+          if (oy.say) {
+            ctx.save();
+            ctx.font = 'bold 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            const tw = ctx.measureText(oy.say).width; const padX = 10, bw = tw + padX*2, bh = 26;
+            const Wc = (canvas.clientWidth || 320);
+            let bx = cx - bw/2; bx = Math.max(6, Math.min(Wc - bw - 6, bx));
+            const by = Math.max(6, pf.y - dh*0.5 - bh - 6);
+            ctx.globalAlpha *= a;
+            ctx.fillStyle = 'rgba(20,24,40,0.66)';
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 9); ctx.fill(); } else ctx.fillRect(bx, by, bw, bh);
+            ctx.fillStyle = '#bfe6ff'; ctx.fillText(oy.say, bx + bw/2, by + bh/2 + 1);
+            ctx.restore();
+          }
+        }
+
         // === 操作感マルチプライヤ（糖・フィーバー・インスリンで変化）===
         function insulinK() { // 1（開始・最も鈍い）→ 0（終わり・回復）
           if (!state.insulin.active) return 0;
@@ -1881,6 +2023,7 @@
           speech = { text: '', t: 0, dur: 0, color: '#fff', cd: 0 };
           emoResetBG();
           kataanReset();
+          oyasumiReset();
           state.scoredPids = new Set();
           initBG();
           // 縦画面（スマホ）向けに軽くスケーリング
@@ -1920,7 +2063,7 @@
           player.x = startPf.x + startPf.w / 2 - player.w / 2;
           player.y = startPf.y - player.h;
           player.footY = startPf.y;
-          player.vx = 0; player.vy = 0; player.onGround = true; player.groundId = startPf.id; player.airJumpsLeft = state.fever ? 1 : 0;
+          player.vx = 0; player.vy = 0; player.onGround = true; player.groundId = startPf.id; player.airJumpsLeft = state.fever ? 1 : 0; player.facing = 1;
           state.safePlatformId = startPf.id;
           state.leftSafe = false;
           state.safeFadeT = 0;
@@ -2119,7 +2262,7 @@
             counters: { platformIdCounter, sugarIdCounter },
             timers: { pfSpawnTimer: (typeof pfSpawnTimer==='number'?pfSpawnTimer:0), pfNextDelay: (typeof pfNextDelay==='number'?pfNextDelay:1.8), phaseTimer, phaseLenSec },
             arrays: {
-              platforms: platforms.map(p => ({ id:p.id,x:p.x,y:p.y,w:p.w,h:p.h,hue:p.hue||0,safe:!!p.safe,stayT:p.stayT||0,fading:!!p.fading,fadeT:p.fadeT||0 })),
+              platforms: platforms.filter(p => !p.oyasumi).map(p => ({ id:p.id,x:p.x,y:p.y,w:p.w,h:p.h,hue:p.hue||0,safe:!!p.safe,stayT:p.stayT||0,fading:!!p.fading,fadeT:p.fadeT||0 })),
               sugars: sugars.map(s => ({ id:s.id,x:s.x,y:s.y,r:s.r,alive:s.alive }))
             }
           };
@@ -2156,6 +2299,7 @@
               // 背景は通常状態から再開（感情の風景システム）
               emoResetBG();
               kataanReset();
+              oyasumiReset();
 
               player.x = data.player.x; player.y = data.player.y; player.vx = data.player.vx; player.vy = data.player.vy;
               player.onGround = !!data.player.onGround; player.groundId = data.player.groundId; player.airJumpsLeft = data.player.airJumpsLeft||0;
@@ -2491,6 +2635,8 @@
           updateEmoBG(dt);
           // 情報カターン（もうひとりの主人公）の飛行
           updateKataan(dt);
+          // おやすみカターン（休憩の避難所）
+          updateOyasumi(dt);
           
           // フェーズ変更演出の更新
           if (phaseTransition.active) {
@@ -2623,6 +2769,8 @@
           } else if (R) {
             dir = 1;
           }
+          // 操作方向に合わせて向きを更新（入力を止めたら最後の向きを維持）
+          if (dir !== 0) player.facing = dir;
           player.vx = dir * player.speed * moveMul();
           player.x += player.vx * dt;
 
@@ -2732,7 +2880,7 @@
             } else {
               // 上向き（ジャンプ上昇中）の頭ぶつかり判定は赤いバーのみ有効（すり抜けない）
               for (const pf of platforms) {
-                if (!pf.safe) continue; // 赤いバー以外は上昇時すり抜け
+                if (!pf.safe || pf.oyasumi) continue; // 赤いバー以外（おやすみ雲含む）は上昇時すり抜け
                 const pHitW = player.w * 0.75;
                 const pHitL = player.x + (player.w - pHitW) * 0.5;
                 const pHitR = pHitL + pHitW;
@@ -3368,15 +3516,16 @@
           // Platforms
           for (const p of platforms) {
             if (p.safe) {
+              if (p.oyasumi) continue; // おやすみカターンは専用描画（drawOyasumi）で行う
               const alpha = (state.safeFading && state.safePlatformId === p.id) ? Math.max(0, 1 - state.safeFadeT) : 1;
               ctx.save();
               ctx.globalAlpha = alpha;
-              
+
               // ベッド画像が読み込まれていれば画像を、そうでなければ赤いバー
               // 赤いバー
               ctx.fillStyle = '#cc0000';
               ctx.fillRect(p.x, p.y, p.w, p.h);
-              
+
               ctx.restore();
               continue;
             }
@@ -3401,6 +3550,9 @@
             ctx.fillRect(p.x, p.y + p.h - 2, p.w, 2);
             ctx.restore();
           }
+
+          // おやすみカターン（休憩の避難所）をプレイヤーの背面に描画
+          drawOyasumi(ctx);
 
           // Sugars (collectibles)
           for (const s of sugars) {
@@ -3754,7 +3906,7 @@
         }
 
         function drawCharacter(x, y, w, h, anim, sleeping=false) {
-          if (charSpriteReady) return drawSpriteMan(x, y, w, h, anim, sleeping);
+          if (charSpriteReady || glucoRReady || glucoLReady) return drawSpriteMan(x, y, w, h, anim, sleeping);
           return drawGlucoseMan(x, y, w, h, anim, sleeping);
         }
 
@@ -3771,7 +3923,10 @@
           // 中央に画像をhに合わせて描画
           const onSafeBar = (!state.activated && state.safePlatformId != null && player.groundId === state.safePlatformId);
           const useSleep = (state.gameOver || onSafeBar) && charSpriteSleepReady;
-          const spr = useSleep ? charSpriteSleep : charSprite;
+          // 通常時は操作方向に合わせた左右別画像を使う（反転なし）
+          const faceSpr = (player.facing < 0) ? (glucoLReady ? GLUCO_L : null)
+                                              : (glucoRReady ? GLUCO_R : null);
+          const spr = useSleep ? charSpriteSleep : (faceSpr || charSprite);
           const iw = spr.naturalWidth || 1;
           const ih = spr.naturalHeight || 1;
           const scale = h / ih;
