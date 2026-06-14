@@ -210,6 +210,10 @@
           feverRatio: 0,
           // インスリンスパイク：フィーバー後の「高揚のあとの静けさ」
           insulin: { active: false, t: 0, dur: 5.0 },
+          // === 残機システム（やさしく戻れる）===
+          lives: 3,            // 残り復帰回数
+          respawnInvuln: 0,    // 再登場直後の無敵時間（秒）
+          respawnGlide: 0,     // ゆっくり降下＆操作待ち時間（秒）
           // セーフ足場関連
           safePlatformId: null,
           leftSafe: false,
@@ -2109,6 +2113,7 @@
           kataanReset();
           oyasumiReset();
           platFinalT0 = null;
+          state.lives = 3; state.respawnInvuln = 0; state.respawnGlide = 0;
           state.scoredPids = new Set();
           initBG();
           // 縦画面（スマホ）向けに軽くスケーリング
@@ -2386,6 +2391,7 @@
               kataanReset();
               oyasumiReset();
               platFinalT0 = null;
+              state.lives = 3; state.respawnInvuln = 0; state.respawnGlide = 0;
 
               player.x = data.player.x; player.y = data.player.y; player.vx = data.player.vx; player.vy = data.player.vy;
               player.onGround = !!data.player.onGround; player.groundId = data.player.groundId; player.airJumpsLeft = data.player.airJumpsLeft||0;
@@ -2844,6 +2850,10 @@
             BG.popups.length = 0;
           }
 
+          // 復帰タイマー更新（無敵・降下/操作待ち）
+          if (state.respawnInvuln > 0) state.respawnInvuln = Math.max(0, state.respawnInvuln - dt);
+          if (state.respawnGlide > 0) state.respawnGlide = Math.max(0, state.respawnGlide - dt);
+
           // 入力（横移動）：左右同時押し時は最後に押した方向を優先
           let dir = 0;
           const L = keys.has('left');
@@ -2855,6 +2865,8 @@
           } else if (R) {
             dir = 1;
           }
+          // 復帰中の降下＆操作待ち：横入力とジャンプを無効化（急に操作開始にしない）
+          if (state.respawnGlide > 0) { dir = 0; keys.delete('jump'); control.jumpBuf = 0; }
           // 操作方向に合わせて向きを更新。横入力中のみ横向き、止めたら正面に戻す
           player.moving = (dir !== 0);
           if (dir !== 0) player.facing = dir;
@@ -2923,7 +2935,9 @@
           while (remain > 0) {
             const step = Math.min(maxStep, remain);
             const prevFoot = player.footY || (player.y + player.h);
-            player.vy = Math.min(world.maxFall, player.vy + world.gravity * gravMul() * step);
+            // 復帰中はゆっくり降下（やさしく足場へ）
+            const _fallCap = (state.respawnGlide > 0) ? 150 : world.maxFall;
+            player.vy = Math.min(_fallCap, player.vy + world.gravity * gravMul() * step);
             player.footY = prevFoot + player.vy * step;
             player.y = player.footY - player.h;
 
@@ -3354,10 +3368,50 @@
           }
           popups = popups.filter(p => p.life < 1.0);
 
-          // Game over: fell off bottom of screen（足元で判定）
-          if (player.footY > H) {
-            gameOver();
+          // Game over: 画面下に落下。残機が残っていれば復帰、なければゲームオーバー
+          if (player.footY > H && state.respawnInvuln <= 0) {
+            if (state.lives > 0) {
+              state.lives -= 1;
+              doRespawn();
+            } else {
+              gameOver();
+            }
           }
+        }
+
+        // 落下時の復帰セリフ
+        const RESPAWN_LINES = ['まだ大丈夫', 'もう一度、ゆっくり', '糖の流れに戻ろう', '落ちても、また戻れる'];
+        function doRespawn() {
+          const W = canvas.clientWidth || 320, H = canvas.clientHeight || 600;
+          // フィーバー/インスリン/変身は安全に解除（クリーンな状態で戻す）
+          state.fever = false; state.feverTime = 0; state.feverRatio = 0; state.feverFlash = 0;
+          if (state.insulin) { state.insulin.active = false; state.insulin.t = 0; }
+          if (state.power && state.power.kind) {
+            state.power.kind = null; player.transformScaleMul = 1.0;
+            try { const base = DESIGN_BASE_SCALE * phaseScale(currentPhase) * player.transformScaleMul; setPlayerScaleTarget(base); } catch(_){}
+          }
+          // 乗りやすい足場を選ぶ（画面内で最も上にある通常足場）。なければ中央に1枚生成
+          let target = null;
+          for (const p of platforms) {
+            if (p.safe) continue;
+            if (p.y < 60 || p.y > H * 0.78) continue;
+            if (!target || p.y < target.y) target = p;
+          }
+          if (!target) { try { target = makePlatform(Math.round(H * 0.42)); platforms.push(target); } catch(_){} }
+          const tx = target ? (target.x + target.w / 2) : (W / 2);
+          // 画面上からゆっくり降りてくる
+          player.w = player.baseW; player.h = player.baseH; player.scale = 1.0; // スケールを通常へ
+          player.x = Math.round(tx - player.w / 2);
+          player.footY = -30; player.y = player.footY - player.h;
+          player.vx = 0; player.vy = 0;
+          player.onGround = false; player.groundId = null; player.airJumpsLeft = 0;
+          // 安全時間：降下＆操作待ち1.4s、無敵2.0s
+          state.respawnGlide = 1.4;
+          state.respawnInvuln = 2.0;
+          // 演出
+          popups.push({ x: tx, y: 90, vx: 0, vy: -14, life: 0,
+                        text: RESPAWN_LINES[(Math.random()*RESPAWN_LINES.length)|0], color: '#bfe6ff' });
+          try { sfxPlay.resume(); } catch(_){}
         }
 
 // 天蓋当たり判定は廃止
@@ -3420,12 +3474,15 @@
             ctx.globalAlpha *= alpha;
             if (ready) {
               const iw = img.naturalWidth, ih = img.naturalHeight;
-              // cover：幅・高さ両方を必ず満たす拡大率（横に余白が出ない）
-              const scale = Math.max(W / iw, H / ih);
+              // cover：幅・高さ両方を満たす拡大率（横歪みなし・等比）
+              let scale = Math.max(W / iw, H / ih);
+              // 縦の余白が足りない画像は軽くズームして必ず最低スクロール量を確保
+              const MIN_PAN = 280; // どの背景でも最低これだけ縦パンさせる(px)
+              if (ih * scale < H + MIN_PAN) scale = (H + MIN_PAN) / ih;
               const dw = iw * scale, dh = ih * scale;
               const ox = (W - dw) / 2; // 横は中央基準（はみ出しは左右均等にトリミング）
-              // panFrac 0→1 で、画像の最上部→最下部までを必ず見せる（絵巻物の旅）
-              const oy = (dh > H) ? (H - dh) * Math.max(0, Math.min(1, panFrac)) : (H - dh) / 2;
+              // panFrac 0→1 で、画像の上→下へ必ずゆっくり縦パン（旅をしている感覚）
+              const oy = (H - dh) * Math.max(0, Math.min(1, panFrac)); // dh>=H+MIN_PAN なので常に可動
               // 左右1pxにじませてサブピクセル隙間（白帯）を根絶
               ctx.drawImage(img, Math.floor(ox) - 1, Math.floor(oy), Math.ceil(dw) + 2, Math.ceil(dh));
             } else {
@@ -3727,7 +3784,15 @@
           } else {
             // 通常キャラ
             const sleeping = !state.gameOver;
-            drawCharacter(player.x, yAdj, player.w, player.h, anim, sleeping);
+            // 復帰直後の無敵中は点滅で知らせる
+            if (state.respawnInvuln > 0) {
+              ctx.save();
+              ctx.globalAlpha = 0.45 + 0.35 * Math.sin(state.time * 22);
+              drawCharacter(player.x, yAdj, player.w, player.h, anim, sleeping);
+              ctx.restore();
+            } else {
+              drawCharacter(player.x, yAdj, player.w, player.h, anim, sleeping);
+            }
           }
 
           // Debug: 足元の十字と当たり枠（dev=1/2 で有効）
@@ -3872,6 +3937,36 @@
           }
           // 情報カターン（もうひとりの主人公）を描画
           drawKataan(ctx, W, H);
+
+          // 残機表示（画面上部・右端に小さく）：アイコン× N
+          {
+            const n = Math.max(0, state.lives|0);
+            const ih2 = 22, iw2 = 22;
+            const numTxt = '× ' + n;
+            ctx.save();
+            ctx.font = 'bold 16px system-ui, sans-serif';
+            ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            const tw = ctx.measureText(numTxt).width;
+            const padX = 8, gap = 3;
+            const bw = padX + iw2 + gap + tw + padX, bh = 28;
+            const bx = W - bw - 8, by = 8, cyl = by + bh/2;
+            ctx.fillStyle = 'rgba(20,24,40,0.5)';
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 9); ctx.fill(); }
+            else ctx.fillRect(bx, by, bw, bh);
+            const icon = charSpriteReady ? charSprite : null;
+            const ix = bx + padX;
+            if (icon) {
+              const ar = (icon.naturalWidth||1) / (icon.naturalHeight||1);
+              const dh3 = ih2, dw3 = dh3 * ar;
+              ctx.drawImage(icon, ix + (iw2 - dw3)/2, cyl - dh3/2, dw3, dh3);
+            } else {
+              ctx.fillStyle = '#9b5de5';
+              ctx.beginPath(); ctx.arc(ix + iw2/2, cyl, ih2*0.42, 0, Math.PI*2); ctx.fill();
+            }
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(numTxt, ix + iw2 + gap, cyl + 1);
+            ctx.restore();
+          }
 
           // 変身状態の常時表示（画面上部・中央）
           if (state.power && state.power.kind) {
