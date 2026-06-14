@@ -1572,6 +1572,149 @@
           }
         }
 
+        // =====================================================================
+        // === 情報カターン：もうひとりの主人公（AIプレイヤー風の横切りキャラ）===
+        // ロケットで画面上部〜中段を高速飛行。当たり判定なし・プレイヤーを邪魔しない。
+        // 左右向き素材を反転せず使い、進行方向に合わせて差し替える。
+        // =====================================================================
+        const KATAAN_L = new Image(); KATAAN_L.src = 'assets/kataan_left.png';   // 左向き（左へ進む）
+        const KATAAN_R = new Image(); KATAAN_R.src = 'assets/kataan_right.png';  // 右向き（右へ進む）
+        const KATAAN_LINES = {
+          normal: ['速報だーー！！', '通知が止まらない！！', '次！次！次！', '新情報だ！！'],
+          cheer:  ['ナイス着地！！', '今の見た！？すごい！！', 'その調子だーー！！', 'AI判定：完璧！！'],
+          panic:  ['え！？何の通知だったっけ！？', '情報が多すぎるーー！！', 'ちょっと待って！！', '全部大事に見える！！'],
+          heal:   ['……景色、綺麗だったんだ。', '急がなくてもよかったのかも。', '少し休んでもいいのかな。', '音楽っていいな。'],
+        };
+        const KATAAN_RARE_LINES = {
+          uturn:   ['あれ！？こっちじゃない！？', 'Uターンッ！！', '道、間違えたーー！！'],
+          zoom:    ['うわぁぁぁ！！', '通知多すぎィィ！！', 'とおりまーーす！！'],
+          pudding: ['情報よりプリンが大事かも……', 'ちょっとプリン食べたい……'],
+        };
+        const kataan = {
+          active: false, x: 0, y: 0, baseY: 0, dir: 1, vx: 0,
+          t: 0, bob: 0, scale: 0.32, mode: 'normal', rare: null, turned: false,
+          text: '', img: null, schedule: 12,
+        };
+        function kataanReset() {
+          kataan.active = false; kataan.t = 0; kataan.rare = null; kataan.turned = false;
+          kataan.text = ''; kataan.schedule = 8 + Math.random() * 8;
+        }
+        function kataanPickMode() {
+          // 同じゲームを別レーンで遊んでいる感：状態でモードが変わる
+          const nearFinal = (currentPhase === 'final') || ((state.time || 0) >= 840);
+          if (nearFinal) return 'heal';                              // 癒やし（Final付近）
+          if (state.fever || state.comboMult >= 3) return 'cheer';   // 応援（高コンボ/フィーバー）
+          if (Math.random() < 0.18) return 'panic';                  // 焦り（低確率）
+          return 'normal';                                           // 通常
+        }
+        function kataanSpawn() {
+          const Wc = (canvas && canvas.clientWidth) || 320;
+          const Hc = (canvas && canvas.clientHeight) || 600;
+          const dir = (Math.random() < 0.5) ? 1 : -1;
+          const mode = kataanPickMode();
+          // レア演出抽選（約9%）。癒やし中は穏やかに（暴走系は出さない）
+          let rare = null;
+          if (Math.random() < 0.09) {
+            const pool = (mode === 'heal') ? ['pudding'] : ['uturn', 'zoom', 'pudding'];
+            rare = pool[(Math.random()*pool.length)|0];
+          }
+          kataan.active = true; kataan.dir = dir; kataan.mode = mode; kataan.rare = rare;
+          kataan.turned = false; kataan.t = 0; kataan.bob = Math.random() * 6.28;
+          kataan.scale = 0.30 + Math.random() * 0.06;
+          let speed = 300 + Math.random() * 160;
+          if (mode === 'heal') speed = 150 + Math.random() * 50;     // 癒やしはゆっくり
+          if (rare === 'zoom') speed = 620 + Math.random() * 140;    // 暴走は高速
+          kataan.vx = dir * speed;
+          kataan.baseY = Hc * (0.10 + Math.random() * 0.34);          // 上部〜中段
+          kataan.y = kataan.baseY;
+          const sprW = Wc * kataan.scale;
+          kataan.x = (dir > 0) ? -sprW * 0.6 : Wc + sprW * 0.6;       // 進行方向の画面外から
+          kataan.img = (dir > 0) ? KATAAN_R : KATAAN_L;               // 反転せず差し替え
+          const lines = rare ? KATAAN_RARE_LINES[rare] : KATAAN_LINES[mode];
+          kataan.text = lines[(Math.random()*lines.length)|0];
+        }
+        function kataanTsukkomi() {
+          // グルコースマンがツッコむ（既存の吹き出しsystemを流用）
+          speech.text = '落ち着けって'; speech.dur = 2.0; speech.t = 0; speech.color = '#cfe8ff'; speech.cd = 2.4;
+        }
+        function updateKataan(dt) {
+          if (!kataan.active) {
+            kataan.schedule -= dt;
+            if (kataan.schedule <= 0) kataanSpawn();
+            return;
+          }
+          kataan.t += dt; kataan.bob += dt * 4;
+          const Wc = (canvas && canvas.clientWidth) || 320;
+          const Hc = (canvas && canvas.clientHeight) || 600;
+          const sprW = Wc * kataan.scale;
+          kataan.x += kataan.vx * dt;
+          kataan.y = kataan.baseY + Math.sin(kataan.bob) * (kataan.mode === 'heal' ? 4 : 9);
+          // レア：Uターン（中央付近で一度だけ反転＝迷走）
+          if (kataan.rare === 'uturn' && !kataan.turned) {
+            const mid = Wc * 0.5;
+            if ((kataan.dir > 0 && kataan.x > mid) || (kataan.dir < 0 && kataan.x < mid)) {
+              kataan.turned = true;
+              kataan.dir *= -1;
+              kataan.vx = kataan.dir * Math.abs(kataan.vx) * 1.1;
+              kataan.img = (kataan.dir > 0) ? KATAAN_R : KATAAN_L;
+              kataan.text = KATAAN_RARE_LINES.uturn[(Math.random()*KATAAN_RARE_LINES.uturn.length)|0];
+              if (Math.random() < 0.6) kataanTsukkomi();
+            }
+          }
+          // 画面外へ出たら退場し、次の登場を予約
+          if (kataan.x < -sprW * 1.3 || kataan.x > Wc + sprW * 1.3) {
+            kataan.active = false;
+            kataan.schedule = 11 + Math.random() * 10;
+          }
+        }
+        function drawKataan(ctx, W, H) {
+          if (!kataan.active) return;
+          const img = kataan.img;
+          const ready = !!(img && img.complete && (img.naturalWidth || 0) > 0);
+          const dw = W * kataan.scale;
+          const dh = dw * (1024 / 1536);
+          const cx = kataan.x, cy = kataan.y;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(kataan.dir > 0 ? 0.04 : -0.04); // 進行方向へ軽い前傾
+          ctx.translate(-cx, -cy);
+          // 排気トレイル（進行方向の後ろへ淡い光）
+          ctx.globalCompositeOperation = 'lighter';
+          for (let i = 1; i <= 5; i++) {
+            const tx = cx - kataan.dir * (dw * 0.36 + i * dw * 0.10);
+            const ty = cy + dh * 0.10 + Math.sin(kataan.bob + i) * 3;
+            const rr = Math.max(1, (6 - i) * (dw * 0.02));
+            ctx.fillStyle = `rgba(255,210,120,${0.10 * (6 - i) / 5})`;
+            ctx.beginPath(); ctx.arc(tx, ty, rr, 0, Math.PI * 2); ctx.fill();
+          }
+          ctx.globalCompositeOperation = 'source-over';
+          if (ready) {
+            ctx.drawImage(img, Math.round(cx - dw/2), Math.round(cy - dh/2), Math.round(dw), Math.round(dh));
+          }
+          ctx.restore();
+          // 吹き出し
+          if (kataan.text) {
+            ctx.save();
+            ctx.font = 'bold 16px system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            const tw = ctx.measureText(kataan.text).width;
+            const padX = 10, bw = tw + padX*2, bh = 28;
+            let bx = cx - bw/2;
+            bx = Math.max(6, Math.min(W - bw - 6, bx));
+            const by = Math.max(6, cy - dh*0.55 - bh);
+            ctx.fillStyle = 'rgba(20,24,40,0.66)';
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 9); ctx.fill(); }
+            else ctx.fillRect(bx, by, bw, bh);
+            const col = kataan.rare ? '#ffd9a0'
+                      : (kataan.mode === 'cheer' ? '#a8ffcc'
+                      : (kataan.mode === 'panic' ? '#ffd0d0'
+                      : (kataan.mode === 'heal'  ? '#cfe0ff' : '#ffffff')));
+            ctx.fillStyle = col;
+            ctx.fillText(kataan.text, bx + bw/2, by + bh/2 + 1);
+            ctx.restore();
+          }
+        }
+
         // === 操作感マルチプライヤ（糖・フィーバー・インスリンで変化）===
         function insulinK() { // 1（開始・最も鈍い）→ 0（終わり・回復）
           if (!state.insulin.active) return 0;
@@ -1737,6 +1880,7 @@
           landRings = [];
           speech = { text: '', t: 0, dur: 0, color: '#fff', cd: 0 };
           emoResetBG();
+          kataanReset();
           state.scoredPids = new Set();
           initBG();
           // 縦画面（スマホ）向けに軽くスケーリング
@@ -2011,6 +2155,7 @@
               state.scoredPids = new Set((data.state&&data.state.scoredPids)||[]);
               // 背景は通常状態から再開（感情の風景システム）
               emoResetBG();
+              kataanReset();
 
               player.x = data.player.x; player.y = data.player.y; player.vx = data.player.vx; player.vy = data.player.vy;
               player.onGround = !!data.player.onGround; player.groundId = data.player.groundId; player.airJumpsLeft = data.player.airJumpsLeft||0;
@@ -2344,6 +2489,8 @@
           updatePhase();
           // 背景は「感情の風景」として独立制御（BGM完全同期はやめた）
           updateEmoBG(dt);
+          // 情報カターン（もうひとりの主人公）の飛行
+          updateKataan(dt);
           
           // フェーズ変更演出の更新
           if (phaseTransition.active) {
@@ -3495,6 +3642,9 @@
             ctx.beginPath(); ctx.arc(cx, cy, rr*0.62, 0, Math.PI*2); ctx.stroke();
             ctx.restore();
           }
+          // 情報カターン（もうひとりの主人公）を描画
+          drawKataan(ctx, W, H);
+
           // 変身状態の常時表示（画面上部・中央）
           if (state.power && state.power.kind) {
             const isBird = (state.power.kind === 'triple');
