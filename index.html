@@ -1499,6 +1499,7 @@
           groundId: null,
           airJumpsLeft: 0,
           facing: 1, // 1=右向き / -1=左向き（最後に入力した方向を維持）
+          moving: false, // 横入力中か（停止中は正面画像に戻す）
           transformScaleMul: 1.0, // 変身での追加スケール
           // 当たり判定を上にずらす割合（プレイヤー高さに対する比率）
           hitboxOffsetYRatio: 0.18,
@@ -1632,9 +1633,9 @@
           kataan.active = true; kataan.dir = dir; kataan.mode = mode; kataan.rare = rare;
           kataan.turned = false; kataan.t = 0; kataan.bob = Math.random() * 6.28;
           kataan.scale = 0.30 + Math.random() * 0.06;
-          let speed = 300 + Math.random() * 160;
-          if (mode === 'heal') speed = 150 + Math.random() * 50;     // 癒やしはゆっくり
-          if (rare === 'zoom') speed = 620 + Math.random() * 140;    // 暴走は高速
+          let speed = 130 + Math.random() * 50;                      // セリフが読めるゆっくり速度
+          if (mode === 'heal') speed = 85 + Math.random() * 25;      // 癒やしはさらにゆっくり
+          if (rare === 'zoom') speed = 280 + Math.random() * 60;     // 暴走だけ速め（短いセリフ）
           kataan.vx = dir * speed;
           kataan.baseY = Hc * (0.10 + Math.random() * 0.34);          // 上部〜中段
           kataan.y = kataan.baseY;
@@ -1737,42 +1738,44 @@
         const GM_REST_LINES  = ['ここ、落ち着くなぁ。', 'ちょっと休もうか。', '急がなくてええんやな。', '景色、綺麗やな。'];
         const OYA_REST_LINES = ['通知は後でいいよ。', '今は休憩。', '焦らなくて大丈夫。', '音楽を楽しもう。'];
         let oyasumiRef = null;     // 現在の足場参照（platforms内）
-        let oyasumiSched = 40;     // 次の出現までの秒
+        let oyasumiSched = 14;     // フェーズ3突入から出現までの猶予秒
         let oyasumiSayT = 0;       // 滞在中セリフのタイマー
+        let oyasumiDone = false;   // 1ゲームに1回だけ（Final前の休憩ポイント）
+        const OYASUMI_STAY = 120;  // 約2分の長めの休憩
         function oyasumiReset() {
           if (oyasumiRef) { try { platforms = platforms.filter(x => x.id !== oyasumiRef.id); } catch(_){} }
-          oyasumiRef = null; oyasumiSched = 30 + Math.random() * 25; oyasumiSayT = 0;
+          oyasumiRef = null; oyasumiSayT = 0; oyasumiDone = false;
+          oyasumiSched = 8 + Math.random() * 12; // フェーズ3突入後 8〜20秒で出現
         }
         function oyasumiSpawn() {
           const Wc = (canvas && canvas.clientWidth) || 320;
           const Hc = (canvas && canvas.clientHeight) || 600;
-          const imgW = Math.min(Wc * 0.72, 420);
+          const imgW = Math.min(Wc * 0.58, 340);
           const imgH = imgW * (1024 / 1536);
-          const standW = imgW * 0.46;                       // 乗れる面の幅
-          const cx = Wc * 0.30 + Math.random() * (Wc * 0.40);
-          const baseY = Hc * (0.26 + Math.random() * 0.18); // 上部〜中段
+          const standW = imgW * 0.44;                       // 乗れる面の幅
+          const side = (Math.random() < 0.5) ? -1 : 1;
+          const cx = (side < 0) ? Wc * 0.17 : Wc * 0.83;    // 画面端（プレイ列の邪魔をしない）
+          const baseY = Hc * (0.22 + Math.random() * 0.14); // 上部寄り
           const pf = {
             id: platformIdCounter++, safe: true, oyasumi: true,
             x: Math.round(cx - standW/2), y: Math.round(baseY),
             w: Math.round(standW), h: 18,
             oy: { phase: 'enter', t: 0, alpha: 0, baseY: Math.round(baseY), imgW, imgH,
-                  dur: 9.5 + Math.random() * 2.5, say: null, sayT: 0 }
+                  dur: OYASUMI_STAY, say: null, sayT: 0, warned: false }
           };
           platforms.push(pf);
           oyasumiRef = pf;
           oyasumiSayT = 2.4;
-          popups.push({ x: Wc/2, y: Math.max(40, baseY - imgH*0.5), vx: 0, vy: -10, life: 0,
+          popups.push({ x: cx, y: Math.max(40, baseY - imgH*0.5), vx: 0, vy: -10, life: 0,
                         text: OYASUMI_APPEAR[(Math.random()*OYASUMI_APPEAR.length)|0], color: '#bfe6ff' });
         }
         function updateOyasumi(dt) {
           if (!oyasumiRef) {
+            if (oyasumiDone) return;                         // 1ゲーム1回
             if (!state.activated) return;                   // 赤バー期は出さない（重ならない）
+            if (currentPhase !== 'phase3') return;          // フェーズ3あたりで出現
             oyasumiSched -= dt;
-            if (oyasumiSched <= 0) {
-              const nearFinal = (currentPhase === 'final') || ((state.time||0) >= 840);
-              oyasumiSpawn();                                // 低確率＝長い間隔で稀に出現
-              oyasumiSched = nearFinal ? (30 + Math.random()*25) : (45 + Math.random()*35);
-            }
+            if (oyasumiSched <= 0) { oyasumiSpawn(); oyasumiDone = true; }
             return;
           }
           const pf = oyasumiRef, oy = pf.oy;
@@ -1800,19 +1803,20 @@
           } else if (oy.phase === 'stay') {
             oy.alpha = 1;
             pf.y = Math.round(oy.baseY + Math.sin(state.time * 1.6) * 2); // ふわふわ
-            if (oy.t >= oy.dur) {
-              oy.phase = 'leave'; oy.t = 0;
-              popups.push({ x: (canvas.clientWidth||320)/2, y: Math.max(40, oy.baseY - oy.imgH*0.5), vx: 0, vy: -10,
+            // 消える約4秒前に予告（突然消えない）
+            if (!oy.warned && oy.t >= oy.dur - 4) {
+              oy.warned = true;
+              popups.push({ x: pf.x + pf.w/2, y: Math.max(40, oy.baseY - oy.imgH*0.5), vx: 0, vy: -10,
                             life: 0, text: OYASUMI_LEAVE[(Math.random()*OYASUMI_LEAVE.length)|0], color: '#ffe0a0' });
             }
+            if (oy.t >= oy.dur) { oy.phase = 'leave'; oy.t = 0; }
           } else if (oy.phase === 'leave') {
-            const p = Math.min(1, oy.t / 2.0);              // 2秒かけて静かに浮かんで消える
+            const p = Math.min(1, oy.t / 2.5);              // 2.5秒かけて静かに浮かんで消える
             oy.alpha = 1 - p;
-            pf.y = Math.round(oy.baseY - p * 34);
-            if (oy.t >= 2.0) {
+            pf.y = Math.round(oy.baseY - p * 40);
+            if (oy.t >= 2.5) {
               platforms = platforms.filter(x => x.id !== pf.id);
-              oyasumiRef = null;
-              oyasumiSched = Math.max(oyasumiSched, 30 + Math.random() * 25); // 連続出現禁止
+              oyasumiRef = null;                            // 以後は出現しない（oyasumiDone=true）
             }
           }
         }
@@ -2769,7 +2773,8 @@
           } else if (R) {
             dir = 1;
           }
-          // 操作方向に合わせて向きを更新（入力を止めたら最後の向きを維持）
+          // 操作方向に合わせて向きを更新。横入力中のみ横向き、止めたら正面に戻す
+          player.moving = (dir !== 0);
           if (dir !== 0) player.facing = dir;
           player.vx = dir * player.speed * moveMul();
           player.x += player.vx * dt;
@@ -3923,9 +3928,10 @@
           // 中央に画像をhに合わせて描画
           const onSafeBar = (!state.activated && state.safePlatformId != null && player.groundId === state.safePlatformId);
           const useSleep = (state.gameOver || onSafeBar) && charSpriteSleepReady;
-          // 通常時は操作方向に合わせた左右別画像を使う（反転なし）
-          const faceSpr = (player.facing < 0) ? (glucoLReady ? GLUCO_L : null)
-                                              : (glucoRReady ? GLUCO_R : null);
+          // 横移動中のみ左右別画像（反転なし）。停止中・バー上は正面画像(charSprite)に戻す
+          const faceSpr = player.moving ? ((player.facing < 0) ? (glucoLReady ? GLUCO_L : null)
+                                                               : (glucoRReady ? GLUCO_R : null))
+                                        : null;
           const spr = useSleep ? charSpriteSleep : (faceSpr || charSprite);
           const iw = spr.naturalWidth || 1;
           const ih = spr.naturalHeight || 1;
