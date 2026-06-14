@@ -1531,6 +1531,47 @@
           speech.cd = (opt.cd != null) ? opt.cd : 2.6;
         }
 
+        // === 変身（鳥帽子＝triple / 巨大化＝ultra）のセリフ ===
+        const GM_BIRD = [
+          '🐦 鳥の加護！！', '∞ 二段ジャンプ解放！！', '今日は飛び放題だー！！',
+          'まだまだ跳べるッ！！', '空ってこんなに自由だったのかー！！'
+        ];
+        const GM_GIANT = [
+          '💪 巨大化！！', 'どっしりモード発動！！', '今日は落ちる気がしない！！',
+          '多少はみ出しても大丈夫！！', 'この安心感、たまらん！！', '慌てなくて大丈夫！'
+        ];
+        function gmSayPower(kind, opt) {
+          opt = opt || {};
+          const arr = (kind === 'triple') ? GM_BIRD : GM_GIANT;
+          if (speech.cd > 0 && !opt.force) return;
+          speech.text = arr[(Math.random()*arr.length)|0];
+          speech.dur = opt.dur || 2.2;
+          speech.t = 0;
+          speech.color = (kind === 'triple') ? '#bfe6ff' : '#ffd9a0';
+          speech.cd = (opt.cd != null) ? opt.cd : 2.6;
+        }
+        // 変身突入の大きな演出（リング＋粒子＋光フラッシュ＋軽いシェイク）
+        function spawnTransformFx(kind) {
+          const cx = player.x + player.w/2;
+          const cy = (player.footY || (player.y + player.h)) - player.h/2;
+          const ringCol = (kind === 'triple') ? '180,230,255' : '255,210,120';
+          landRings.push({ x: cx, y: cy, r0: 14, maxR: 170, life: 0, ttl: 0.7, color: ringCol, w: 5 });
+          landRings.push({ x: cx, y: cy, r0: 8,  maxR: 95,  life: 0, ttl: 0.5, color: '255,255,255', w: 3 });
+          const pcol = (kind === 'triple') ? '#cfeeff' : '#ffe0a0';
+          for (let i = 0; i < 26; i++) {
+            const a = Math.random() * Math.PI * 2;
+            const sp = 120 + Math.random() * 200;
+            particles.push({ x: cx, y: cy, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, g: 120, life: 0,
+                             ttl: 0.6 + Math.random()*0.4, r: 2 + Math.random()*2.5, color: pcol, drag: 1.2 });
+          }
+          state.feverFlash = Math.max(state.feverFlash, 0.7); // 一瞬の光（既存フラッシュ流用）
+          if (!(state.insulin && state.insulin.active)) {
+            if (!screenShake.active || screenShake.intensity < 3) {
+              screenShake = { active: true, intensity: 3, timer: 0, duration: 0.25 };
+            }
+          }
+        }
+
         // === 操作感マルチプライヤ（糖・フィーバー・インスリンで変化）===
         function insulinK() { // 1（開始・最も鈍い）→ 0（終わり・回復）
           if (!state.insulin.active) return 0;
@@ -2741,13 +2782,17 @@
                 // スケールは現状維持
                 const base = DESIGN_BASE_SCALE * phaseScale(currentPhase) * player.transformScaleMul;
                 setPlayerScaleTarget(base);
-                // 取得メッセージ
-                const msg = (it.kind==='triple' ? '無限ジャンプ！20s' : '超巨大化！20s');
+                // 取得メッセージ（効果が伝わる文言に）
+                const msg = (it.kind==='triple' ? '🐦 無限二段ジャンプ！20s' : '💪 安定着地モード！20s');
                 popups.push({ x: player.x + player.w/2, y: player.y - 24, vx: 0, vy: -28, life: 0, text: msg, color: '#ffe68a' });
                 // 1000点加点
                 state.score += 1000;
                 popups.push({ x: player.x + player.w/2, y: player.y - 48, vx: 0, vy: -26, life: 0, text: '+1000', color: '#ffd96a' });
                 sfxPlay.itemPick();
+                // 変身突入の大きな演出＋グルコースマンが喋る
+                spawnTransformFx(it.kind);
+                gmSayPower(it.kind, { force: true, dur: 2.6 });
+                state.powerSayT = 4 + Math.random() * 2; // 数秒ごとのランダム一言まで
                 state.activeItem = null;
               }
             }
@@ -2756,6 +2801,12 @@
           // 変身タイマーと終了処理
           if (state.power && state.power.kind) {
             state.power.t = Math.max(0, state.power.t - dt);
+            // プレイ中も数秒ごとにランダムで一言（爽快さ／安心感を伝える）
+            state.powerSayT = (state.powerSayT || 0) - dt;
+            if (state.powerSayT <= 0 && state.power.t > 1.2) {
+              gmSayPower(state.power.kind, { dur: 2.0 });
+              state.powerSayT = 4 + Math.random() * 3;
+            }
             if (state.power.t === 0) {
               state.power.kind = null;
               player.transformScaleMul = 1.0;
@@ -2979,7 +3030,7 @@
           }
           
           // === 背景描画（絵巻物スクロール・クロスフェード）===
-          // 縦長画像を「幅フィット（横歪みなし）」で描き、上→下へ最後まで流し切る。
+          // 縦長画像を cover 方式（中央基準）で常に画面幅100%に敷き詰め、上→下へ流し切る。
           const drawEmoLayer = (key, alpha, panFrac) => {
             const img = EMO_BG[key];
             const ready = !!(img && img.complete && (img.naturalWidth || 0) > 0);
@@ -2987,11 +3038,14 @@
             ctx.globalAlpha *= alpha;
             if (ready) {
               const iw = img.naturalWidth, ih = img.naturalHeight;
-              const scale = W / iw;          // 幅に合わせる＝横方向は歪まない
-              const dw = W, dh = ih * scale;
+              // cover：幅・高さ両方を必ず満たす拡大率（横に余白が出ない）
+              const scale = Math.max(W / iw, H / ih);
+              const dw = iw * scale, dh = ih * scale;
+              const ox = (W - dw) / 2; // 横は中央基準（はみ出しは左右均等にトリミング）
               // panFrac 0→1 で、画像の最上部→最下部までを必ず見せる（絵巻物の旅）
               const oy = (dh > H) ? (H - dh) * Math.max(0, Math.min(1, panFrac)) : (H - dh) / 2;
-              ctx.drawImage(img, 0, Math.floor(oy), Math.ceil(dw), Math.ceil(dh));
+              // 左右1pxにじませてサブピクセル隙間（白帯）を根絶
+              ctx.drawImage(img, Math.floor(ox) - 1, Math.floor(oy), Math.ceil(dw) + 2, Math.ceil(dh));
             } else {
               const grad = ctx.createLinearGradient(0, 0, 0, H);
               grad.addColorStop(0, '#bfe1ff');
@@ -3441,6 +3495,27 @@
             ctx.beginPath(); ctx.arc(cx, cy, rr*0.62, 0, Math.PI*2); ctx.stroke();
             ctx.restore();
           }
+          // 変身状態の常時表示（画面上部・中央）
+          if (state.power && state.power.kind) {
+            const isBird = (state.power.kind === 'triple');
+            const label = isBird ? '🐦 無限二段ジャンプ中' : '💪 安定着地モード中';
+            ctx.save();
+            ctx.font = 'bold 16px system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            const tw = ctx.measureText(label).width;
+            const padX = 12, bw = tw + padX*2, bh = 26, bx = (W - bw)/2, by = 18;
+            ctx.fillStyle = 'rgba(20,24,40,0.55)';
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 9); ctx.fill(); }
+            else ctx.fillRect(bx, by, bw, bh);
+            ctx.fillStyle = isBird ? '#bfe6ff' : '#ffd9a0';
+            ctx.fillText(label, W/2, by + 5);
+            // 残り時間の細いバー（20秒）
+            const ratio = Math.max(0, Math.min(1, state.power.t / 20));
+            ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fillRect(bx, by + bh - 3, bw, 3);
+            ctx.fillStyle = isBird ? '#7fd0ff' : '#ffc06a'; ctx.fillRect(bx, by + bh - 3, bw * ratio, 3);
+            ctx.restore();
+          }
+
           // コンボ継続ゲージ／フィーバー残り時間ゲージ（HUD下・中央寄せ）
           (function drawMetabGauges(){
             const barW = Math.min(W*0.6, 260), barH = 8, bx = (W - barW)/2;
