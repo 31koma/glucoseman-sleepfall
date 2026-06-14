@@ -219,6 +219,9 @@
           leftSafe: false,
           safeFadeT: 0,
           safeFading: false,
+          // 初期赤バー専用フラグ（残機復帰とは別管理）
+          startBarActive: true,    // ゲーム開始直後、赤バーに乗っている
+          hasLeftStartBar: false,  // ジャンプ等で赤バーから離れたか
           // アクティブ化とスコア制御
           activated: false,
           lastScorePid: null,
@@ -2160,6 +2163,11 @@
           state.safeFading = false;
           state.activated = false;
           state.lastScorePid = null;
+          // 初期赤バー：最初から赤バーに接地。離れるまで落下/残機処理を発動させない
+          state.startBarActive = true;
+          state.hasLeftStartBar = false;
+          // 開始直後のすり抜け防止グレース（赤バーに確実に吸着）
+          state.allowFirstLand = true; state.firstLandingTimer = 0.3; state.firstLandingWait = true;
 
           // フェーズシステム初期化
           currentPhase = 'phase1';
@@ -2392,6 +2400,8 @@
               oyasumiReset();
               platFinalT0 = null;
               state.lives = 3; state.respawnInvuln = 0; state.respawnGlide = 0;
+              // 続きから：既にプレイ進行中（初期赤バーは無い）
+              state.startBarActive = false; state.hasLeftStartBar = true;
 
               player.x = data.player.x; player.y = data.player.y; player.vx = data.player.vx; player.vy = data.player.vy;
               player.onGround = !!data.player.onGround; player.groundId = data.player.groundId; player.airJumpsLeft = data.player.airJumpsLeft||0;
@@ -3004,6 +3014,8 @@
             if (player.groundId !== state.safePlatformId) {
               state.leftSafe = true;
               state.safeFading = true; // 既存のフェード処理で消す
+              state.startBarActive = false;     // 初期赤バーから離脱（以後は通常プレイ）
+              state.hasLeftStartBar = true;
             }
           }
           if (landedThisFrame) {
@@ -3369,7 +3381,9 @@
           popups = popups.filter(p => p.life < 1.0);
 
           // Game over: 画面下に落下。残機が残っていれば復帰、なければゲームオーバー
-          if (player.footY > H && state.respawnInvuln <= 0) {
+          // 初期赤バーに乗っている間は落下/残機処理を発動させない（離脱後のみ判定）
+          const playStarted = state.activated || state.hasLeftStartBar;
+          if (playStarted && player.footY > H && state.respawnInvuln <= 0) {
             if (state.lives > 0) {
               state.lives -= 1;
               doRespawn();
