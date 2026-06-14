@@ -1051,37 +1051,37 @@
         });
         // 採用順（全12枚・絵巻物の旅路：明→暗＝空から深海へ降り、ループで再び空へ）
         const EMO_ORDER = ['bg01','bg02','bg03','bg04','bg05','bg06','bg07','bg08','bg09','bg10','bg11','bg12'];
-        function emoDur() { return 80 + Math.random() * 40; } // 1枚を80〜120秒で流し切る
+        const BG_SCROLL = 26; // 背景の縦スクロール速度(px/s)。一定速度で「旅をしている」動きをはっきり出す
         const emoBG = {
           idx: 0,
           cur: EMO_ORDER[0],
-          dur: 95,                 // 現在背景を流し切る秒数（=縦スクロール時間）
-          panT: 0,                 // 縦スクロール経過
+          panPx: 0,                // 現在背景の縦スクロール経過(px)
+          curRange: 300,           // 現在背景の可動域(px)。描画時に実値を書き戻す
           trans: { active: false, t: 0, dur: 2.4, from: EMO_ORDER[0], to: EMO_ORDER[0], fromPan: 1 },
         };
+        function emoCurFrac() { return emoBG.curRange > 0 ? Math.min(1, emoBG.panPx / emoBG.curRange) : 0; }
         function emoResetBG() {
-          emoBG.idx = 0; emoBG.cur = EMO_ORDER[0]; emoBG.dur = emoDur(); emoBG.panT = 0;
+          emoBG.idx = 0; emoBG.cur = EMO_ORDER[0]; emoBG.panPx = 0; emoBG.curRange = 300;
           emoBG.trans.active = false; emoBG.trans.t = 0;
           emoBG.trans.from = EMO_ORDER[0]; emoBG.trans.to = EMO_ORDER[0]; emoBG.trans.fromPan = 0;
         }
         function emoAdvance() {
           const nextIdx = (emoBG.idx + 1) % EMO_ORDER.length;
-          const nextKey = EMO_ORDER[nextIdx];
           emoBG.trans.active = true; emoBG.trans.t = 0; emoBG.trans.dur = 2.4; // クロスフェード
           emoBG.trans.from = emoBG.cur;
-          emoBG.trans.fromPan = Math.min(1, emoBG.panT / Math.max(0.001, emoBG.dur));
-          emoBG.trans.to = nextKey;
-          emoBG.idx = nextIdx; emoBG.cur = nextKey; emoBG.panT = 0; emoBG.dur = emoDur();
+          emoBG.trans.fromPan = emoCurFrac();
+          emoBG.trans.to = EMO_ORDER[nextIdx];
+          emoBG.idx = nextIdx; emoBG.cur = EMO_ORDER[nextIdx]; emoBG.panPx = 0;
         }
         function updateEmoBG(dt) {
           if (emoBG.trans.active) {
             emoBG.trans.t += dt;
             if (emoBG.trans.t >= emoBG.trans.dur) emoBG.trans.active = false;
           }
-          // 縦スクロール（絵巻物を上→下へ）。フィーバー/インスリン中も景色は同じものを流し続ける
-          emoBG.panT += dt;
-          // 1枚を流し切ったら、次の景色へクロスフェード
-          if (emoBG.panT >= emoBG.dur && !emoBG.trans.active) emoAdvance();
+          // 一定速度で縦スクロール（フィーバー/インスリン中も景色は同じものを流し続ける）
+          emoBG.panPx += BG_SCROLL * dt;
+          // 現在画像を可動域いっぱいまで流し切ったら、次の景色へクロスフェード
+          if (!emoBG.trans.active && emoBG.curRange > 0 && emoBG.panPx >= emoBG.curRange) emoAdvance();
         }
 
         // キャラスプライト（任意）：assets/normal.png（通常）、assets/sleep.png（ゲームオーバー／赤バー上）
@@ -2368,6 +2368,11 @@
         }
 
         function tryRestore() {
+          // 「続きから」機能は廃止：常に最初から開始する（初期赤バーを確実に出す）
+          try { localStorage.removeItem('glucoseman_autosave'); } catch(_){}
+          return false;
+        }
+        function tryRestore_DISABLED() {
           try {
             const raw = localStorage.getItem('glucoseman_autosave');
             if (!raw) return false;
@@ -2708,16 +2713,7 @@
             if (state.firstLandingTimer === 0) state.allowFirstLand = false;
           }
           state.time += dt;
-          // オートセーブ（2.5秒ごと、プレイ中のみ）
-          if (!window.__gmAutosave) window.__gmAutosave = { t: 0 };
-          window.__gmAutosave.t += dt;
-          if (window.__gmAutosave.t >= 2.5 && state.running && !state.paused && !state.gameOver) {
-            window.__gmAutosave.t = 0;
-            try {
-              const save = serializeSave();
-              localStorage.setItem('glucoseman_autosave', JSON.stringify(save));
-            } catch(_){}
-          }
+          // オートセーブは廃止（「続きから」機能なし。常に最初から開始）
 
           // 進行中のみ：誤リロード確認（beforeunload）フラグ管理
           if (state.running && !state.paused && !state.gameOver) {
@@ -3499,6 +3495,8 @@
               const oy = (H - dh) * Math.max(0, Math.min(1, panFrac)); // dh>=H+MIN_PAN なので常に可動
               // 左右1pxにじませてサブピクセル隙間（白帯）を根絶
               ctx.drawImage(img, Math.floor(ox) - 1, Math.floor(oy), Math.ceil(dw) + 2, Math.ceil(dh));
+              ctx.restore();
+              return (dh - H); // 可動域(px)を返す（スクロール量決定に使用）
             } else {
               const grad = ctx.createLinearGradient(0, 0, 0, H);
               grad.addColorStop(0, '#bfe1ff');
@@ -3507,21 +3505,25 @@
               ctx.fillRect(0, 0, W, H);
             }
             ctx.restore();
+            return null;
           };
 
           // フィーバー中は景色そのものが覚醒：彩度と明度を少し上げて描く
           const _emoFilterOn = (state.fever && typeof ctx.filter === 'string');
           if (_emoFilterOn) { try { ctx.filter = 'saturate(1.4) brightness(1.06)'; } catch(_){} }
 
-          const curPan = Math.min(1, emoBG.panT / Math.max(0.001, emoBG.dur));
+          const curPan = emoCurFrac();
+          let _emoRange = null;
           if (emoBG.trans && emoBG.trans.active) {
             const p = Math.max(0, Math.min(1, emoBG.trans.t / Math.max(0.001, emoBG.trans.dur)));
             const e = (p < 0.5) ? (2*p*p) : (1 - Math.pow(-2*p + 2, 2) / 2); // easeInOut クロスフェード
             drawEmoLayer(emoBG.trans.from, 1.0, emoBG.trans.fromPan); // 旧景色（流し切った位置で静止）
-            drawEmoLayer(emoBG.trans.to, e, curPan);                  // 新景色を重ねてフェードイン
+            _emoRange = drawEmoLayer(emoBG.trans.to, e, curPan);      // 新景色を重ねてフェードイン
           } else {
-            drawEmoLayer(emoBG.cur, 1.0, curPan);
+            _emoRange = drawEmoLayer(emoBG.cur, 1.0, curPan);
           }
+          // 現在背景の実可動域をコントローラへ反映（スクロール完了判定に使用）
+          if (_emoRange != null && _emoRange > 0) emoBG.curRange = _emoRange;
           if (_emoFilterOn) { try { ctx.filter = 'none'; } catch(_){} }
 
           // 天蓋描画は無効化（直線/ドームなし）
