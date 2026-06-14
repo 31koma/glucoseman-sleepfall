@@ -1311,7 +1311,7 @@
         }
         function convShowLine() {
           const set = CONV_SETS[convSetIdx]; const line = set[convLineIdx];
-          convLineDur = 4 + Math.random()*2; // 1吹き出し4〜6秒
+          convLineDur = 2.2 + Math.random()*1.0; // 1吹き出し2.2〜3.2秒（会話のテンポを上げる）
           convLineT = 0;
           if (line.s === 'g') {
             // グルコースマンの吹き出し（既存speech）。会話中はgmSayを抑制するためcdを長めに
@@ -1368,9 +1368,9 @@
               const set = CONV_SETS[convSetIdx];
               if (convLineIdx >= set.length) {
                 convBubble = null; convState = 'fadeout';
-                convQuietNext = 30 + Math.random()*30; // セット間の静かな時間30〜60秒
+                convQuietNext = 14 + Math.random()*14; // セット間の静かな時間14〜28秒
               } else {
-                convState = 'gap'; convTimer = 2 + Math.random()*1.0; convBubble = null; // 返事まで2〜3秒
+                convState = 'gap'; convTimer = 0.7 + Math.random()*0.7; convBubble = null; // 返事まで0.7〜1.4秒（テンポUP）
               }
             }
           } else if (convState === 'gap') {
@@ -1919,12 +1919,35 @@
         // =====================================================================
         const KATAAN_L = new Image(); KATAAN_L.src = 'assets/kataan_left.png';   // 左向き（左へ進む）
         const KATAAN_R = new Image(); KATAAN_R.src = 'assets/kataan_right.png';  // 右向き（右へ進む）
+        // 騒がしいけど憎めない夢の案内人：意味深とおふざけを混ぜた追加セリフ
+        const KATAAN_DREAM = [
+          'もっと深く眠りの階層へ！', 'カタカタカターン！！', 'ここは、夢の中やで！', '気づいた？明晰夢！',
+          'まだ起きてへんで〜！', '夢の中で寝たことある？', '現実って、なんやろな！', '今日も情報過多や〜！',
+          '眠気MAX！！', '夢のWi-Fi、良好です！', '急げ急げ〜！……いや、急がんでもええか！', '情報があふれてる〜！',
+          '通知はあとあと！', '深層までダイブや！', 'レム睡眠、突入〜！', '起きてる？寝てる？',
+          'ここ、何層目やっけ？', '考えるな、感じろ〜！', 'カターンは全部知ってる！……たぶん！', '今日の悩みは明日の自分へ！',
+          'その夢、保存しとく？', 'いったん寝よ！', '夢の続き、見に行こか！', '次の景色、楽しみやな！',
+        ];
+        // Finalで優先する少し落ち着いたセリフ
+        const KATAAN_CALM = [
+          '次の景色、楽しみやな！', '夢の続き、見に行こか！', 'いったん寝よ！', 'その夢、保存しとく？',
+          '今日の悩みは明日の自分へ！', '現実って、なんやろな！', 'ここは、夢の中やで！', '考えるな、感じろ〜！',
+          '通知はあとあと！',
+        ];
         const KATAAN_LINES = {
-          normal: ['速報だーー！！', '通知が止まらない！！', '次！次！次！', '新情報だ！！'],
+          normal: ['速報だーー！！', '通知が止まらない！！', '次！次！次！', '新情報だ！！', ...KATAAN_DREAM],
           cheer:  ['ナイス着地！！', '今の見た！？すごい！！', 'その調子だーー！！', 'AI判定：完璧！！'],
           panic:  ['え！？何の通知だったっけ！？', '情報が多すぎるーー！！', 'ちょっと待って！！', '全部大事に見える！！'],
-          heal:   ['……景色、綺麗だったんだ。', '急がなくてもよかったのかも。', '少し休んでもいいのかな。', '音楽っていいな。'],
+          heal:   ['……景色、綺麗だったんだ。', '急がなくてもよかったのかも。', '少し休んでもいいのかな。', '音楽っていいな。', ...KATAAN_CALM],
         };
+        let kataanLastText = '';
+        function kataanPick(lines) {
+          if (!lines || !lines.length) return '';
+          let t = lines[(Math.random()*lines.length)|0];
+          for (let i = 0; i < 5 && t === kataanLastText && lines.length > 1; i++) t = lines[(Math.random()*lines.length)|0];
+          kataanLastText = t;
+          return t;
+        }
         const KATAAN_RARE_LINES = {
           uturn:   ['あれ！？こっちじゃない！？', 'Uターンッ！！', '道、間違えたーー！！'],
           zoom:    ['うわぁぁぁ！！', '通知多すぎィィ！！', 'とおりまーーす！！'],
@@ -1971,7 +1994,7 @@
           kataan.x = (dir > 0) ? -sprW * 0.6 : Wc + sprW * 0.6;       // 進行方向の画面外から
           kataan.img = (dir > 0) ? KATAAN_R : KATAAN_L;               // 反転せず差し替え
           const lines = rare ? KATAAN_RARE_LINES[rare] : KATAAN_LINES[mode];
-          kataan.text = lines[(Math.random()*lines.length)|0];
+          kataan.text = kataanPick(lines);
         }
         function kataanTsukkomi() {
           // グルコースマンがツッコむ（既存の吹き出しsystemを流用）
@@ -1997,7 +2020,7 @@
               kataan.dir *= -1;
               kataan.vx = kataan.dir * Math.abs(kataan.vx) * 1.1;
               kataan.img = (kataan.dir > 0) ? KATAAN_R : KATAAN_L;
-              kataan.text = KATAAN_RARE_LINES.uturn[(Math.random()*KATAAN_RARE_LINES.uturn.length)|0];
+              kataan.text = kataanPick(KATAAN_RARE_LINES.uturn);
               if (Math.random() < 0.6) kataanTsukkomi();
             }
           }
