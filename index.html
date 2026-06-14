@@ -1121,43 +1121,81 @@
         // === 背景に浮かぶ文字（薄く・ゆっくり・フェードイン/アウト）===
         // フェーズごとに意味を持たせる。主張しすぎず、でも読める。
         // ===================================================================
+        // 登録した言葉は全て使用する（削らない）。シャッフルバッグで偏りを減らし全語を巡回。
         const FLOAT_WORDS = {
-          // phase1：現世のうつしよ（情報に囲まれた現実・ノイズ）
-          phase1: ['NEWS','NULL','通知','SNS','既読','AI','TREND','解像度','誰かの正解','比較','最適化','検索'],
-          // phase2：問い（プレイヤーへ語りかける）
-          phase2: ['夢とは何か？','現実とは何か？','現実と夢の違いは？','夢はブロックチェーンなのか？',
-                   '記憶は誰のもの？','AIは夢を見るのか？','本当の自分とは？','情報は真実なのか？',
-                   'あなたは今、起きている？','誰が夢を見ている？'],
-          // phase3：受容（安心できる言葉）
-          phase3: ['焦らなくていい','休んでもいい','通知は後でいい','呼吸してる？','音を聴こう',
-                   '景色を見よう','今ここ','ゆっくりでいい','少し休もう','また歩こう'],
-          // final：会話で扱うため浮遊文字は出さない
-          final: [],
+          // phase1：現世のうつしよ（情報・通知系）
+          phase1: ['NEWS','NULL','通知','SNS','既読','TREND','AI','検索','解像度','最適化','比較',
+                   'タイムライン','アルゴリズム','おすすめ','更新','トレンド入り','NFT','web3','シンギュラリティ','メタ認知'],
+          // phase2：問い
+          phase2: ['夢とは何か？','現実とは何か？','現実と夢の違いは？','あなたは今、起きている？','誰が夢を見ている？',
+                   '本当の自分とは？','記憶は誰のもの？','意識とは何か？','自由意志は存在する？','世界はワンワールド？',
+                   '何を見せられてる？','夢の中でまた眠る','データは記憶なのか？','人は情報でできている？','記憶は脳にはない？',
+                   '夢はブロックチェーン？','記録は永遠なのか？','忘れることは悪なのか？','分散された記憶','誰も支配できない夢',
+                   'つながる意識','明晰夢と気づいたら？'],
+          // phase3：受容
+          phase3: ['焦らなくていい','休んでもいい','通知は後でいい','少し休もう','深呼吸して','ゆっくり','耳を澄ませて',
+                   '景色を見よう','また歩こう','頑張りすぎなくていい','一度横になろう','急がなくていい','さらなる眠りの階層へ'],
+          // final：エンディング（歌詞の断片）
+          final: ['行こうぜ 行こうぜ 壁を越えて','グルコースマンと朝まで','響けこの声','ラララララ','hey! hey! hey!',
+                  '行こうぜ 行こうぜ 夢の中へ','笑顔のままでどこまでも','この完璧な世界で','奈落にダイブ','深くもっと深く',
+                  'この不安定な完璧な世界','この不条理な完璧な世界で','月の裏側って知ってる？','旅は終わらない。'],
         };
         let floatWords = [];
-        let floatSpawnT = 2.0;
-        function floatWordsReset() { floatWords = []; floatSpawnT = 2.0; }
+        let floatSpawnT = 3.0;
+        let floatBag = {};      // フェーズ別シャッフル待ち行列
+        let floatLast = '';     // 直前に出した語（連続回避）
+        function floatWordsReset() { floatWords = []; floatSpawnT = 3.0; floatBag = {}; floatLast = ''; }
+        function floatNextWord(phase) {
+          const list = FLOAT_WORDS[phase] || [];
+          if (!list.length) return null;
+          if (!floatBag[phase] || !floatBag[phase].length) {
+            const arr = list.slice();
+            for (let i = arr.length - 1; i > 0; i--) { const j = (Math.random()*(i+1))|0; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; }
+            if (arr[0] === floatLast && arr.length > 1) arr.push(arr.shift()); // 周回の継ぎ目で連続回避
+            floatBag[phase] = arr;
+          }
+          let w = floatBag[phase].shift();
+          if (w === floatLast && floatBag[phase].length) { floatBag[phase].push(w); w = floatBag[phase].shift(); }
+          floatLast = w;
+          return w;
+        }
+        // グルコースマン/情報カターンの吹き出し表示中か（浮遊文字を控える）
+        function floatBubbleBusy() {
+          const sp = (typeof speech !== 'undefined' && speech && speech.dur > 0);
+          const kt = (typeof kataan !== 'undefined' && kataan && kataan.active && kataan.text);
+          return !!(sp || kt);
+        }
+        function spawnFloatWord() {
+          const W = canvas.clientWidth || 320, H = canvas.clientHeight || 600;
+          const text = floatNextWord(currentPhase);
+          if (!text) return;
+          // 中央固定を避け、左右どちらかに寄せて上下にばらつかせる
+          const side = Math.random() < 0.5 ? -1 : 1;
+          const x = W * 0.5 + side * (W * (0.14 + Math.random() * 0.24));
+          const y = H * (0.16 + Math.random() * 0.56);
+          const fs = (currentPhase === 'phase1') ? 27 : (currentPhase === 'phase2' ? 23 : (currentPhase === 'final' ? 22 : 25));
+          floatWords.push({ text, x, y, vx: (Math.random()*6 - 3), vy: -(4 + Math.random()*6),
+                            life: 0, ttl: 6.0 + Math.random()*2.5, fs });
+        }
         function updateFloatWords(dt) {
           const list = FLOAT_WORDS[currentPhase] || [];
           floatSpawnT -= dt;
           if (floatSpawnT <= 0 && list.length) {
-            // phase2(問い)は少しゆっくり・間を空けて、語りかけるように
-            floatSpawnT = (currentPhase === 'phase2') ? (4.5 + Math.random()*3.5) : (3.2 + Math.random()*2.8);
-            const W = canvas.clientWidth || 320, H = canvas.clientHeight || 600;
-            const text = list[(Math.random()*list.length)|0];
-            floatWords.push({
-              text,
-              x: W * (0.16 + Math.random()*0.68),
-              y: H * (0.20 + Math.random()*0.5),
-              vx: (Math.random()*8 - 4),
-              vy: -(5 + Math.random()*8),       // ゆっくり上へ漂う
-              life: 0,
-              ttl: (currentPhase === 'phase2') ? (6.5 + Math.random()*2.5) : (5.5 + Math.random()*2.5),
-              fs: (currentPhase === 'phase1') ? (28) : (currentPhase === 'phase2' ? 24 : 26),
-            });
+            const busy = floatBubbleBusy();
+            // 基本は1つ。たまに2つ同時（最大2）。3つ以上は出さない
+            if (floatWords.length === 0) {
+              spawnFloatWord();
+            } else if (floatWords.length === 1 && !busy && Math.random() < 0.22) {
+              spawnFloatWord();
+            }
+            // 自然な頻度（やや疎）。吹き出し中はさらに間隔を空ける
+            let base = 6.0 + Math.random() * 5.0;   // 6〜11秒
+            if (busy) base += 4.0;
+            floatSpawnT = base;
           }
           for (const w of floatWords) { w.life += dt; w.x += w.vx*dt; w.y += w.vy*dt; }
           floatWords = floatWords.filter(w => w.life < w.ttl);
+          while (floatWords.length > 2) floatWords.shift(); // 同時3つ以上は禁止
         }
         function drawFloatWords(ctx, W, H) {
           if (!floatWords.length) return;
@@ -1240,6 +1278,132 @@
           ctx.fillStyle = '#ffffff'; ctx.font = `bold ${fs}px system-ui, -apple-system, sans-serif`;
           ctx.fillText(endingCur.text, W/2, by + 36);
           ctx.restore();
+        }
+
+        // ===================================================================
+        // === 会話カターン：Final限定の「ゆったり雑談」演出 ===
+        // 隣で夜更かしの雑談が、なんとなく耳に入ってくる空気感。読ませない。
+        // グルコースマンの台詞は既存の吹き出し(speech)を使用、会話カターンは自前の吹き出し。
+        // ===================================================================
+        const CONV_K_IMG = new Image(); CONV_K_IMG.src = 'assets/conv_kataan.png';
+        // g=グルコースマン / k=会話カターン
+        const CONV_SETS = [
+          [ {s:'g',t:'今日の悩みってさ。'}, {s:'k',t:'うん。'}, {s:'g',t:'眠れば消えるんかな。'},
+            {s:'k',t:'消えへんやつもある。'}, {s:'g',t:'でも少し軽くなる。'}, {s:'k',t:'それで十分や。'} ],
+          [ {s:'g',t:'明晰夢になったらさ。'}, {s:'k',t:'うん。'}, {s:'g',t:'夢の中で眠ってみる？'},
+            {s:'k',t:'さらに深く？'}, {s:'g',t:'行けるとこまで。'}, {s:'k',t:'面白そうやな。'} ],
+          [ {s:'g',t:'月の裏側って知ってる？'}, {s:'k',t:'知らん。'}, {s:'g',t:'近づいても届かへんねんて。'},
+            {s:'k',t:'人生みたいやな。'}, {s:'g',t:'トラス構造。'}, {s:'k',t:'急に何（笑）'} ],
+          [ {s:'g',t:'行こうぜ。'}, {s:'k',t:'どこまで？'}, {s:'g',t:'朝まで。'},
+            {s:'k',t:'ええやん。'}, {s:'g',t:'夢の中まで。'}, {s:'k',t:'笑顔のままでな。'} ],
+          [ {s:'g',t:'この世界ってさ。'}, {s:'k',t:'うん。'}, {s:'g',t:'完璧なんかな。'}, {s:'k',t:'不安定やけどな。'},
+            {s:'g',t:'不条理やし。'}, {s:'k',t:'でも、嫌いやない。'}, {s:'g',t:'……また歩くか。'}, {s:'k',t:'また歩こう。'} ],
+        ];
+        const convK = { active:false, alpha:0, x:0, y:0, tx:0, ty:0, bob:0, side:1, enter:false, started:false };
+        let convSetIdx = -1, convLineIdx = 0;
+        let convState = 'wait';     // 'wait' | 'line' | 'gap' | 'fadeout'
+        let convTimer = 12;
+        let convLineDur = 5, convLineT = 0;
+        let convBubble = null, convQuietNext = 40;
+        function convReset() {
+          convK.active=false; convK.alpha=0; convK.enter=false; convK.x=0; convK.started=false;
+          convSetIdx=-1; convLineIdx=0; convState='wait'; convTimer=12; convBubble=null;
+        }
+        function convShowLine() {
+          const set = CONV_SETS[convSetIdx]; const line = set[convLineIdx];
+          convLineDur = 4 + Math.random()*2; // 1吹き出し4〜6秒
+          convLineT = 0;
+          if (line.s === 'g') {
+            // グルコースマンの吹き出し（既存speech）。会話中はgmSayを抑制するためcdを長めに
+            speech.text = line.t; speech.dur = convLineDur; speech.t = 0; speech.color = '#ffe6a0'; speech.cd = convLineDur + 3.0;
+            convBubble = null;
+          } else {
+            convBubble = line.t;
+            speech.cd = Math.max(speech.cd, convLineDur + 1.0);
+          }
+          convState = 'line'; convTimer = convLineDur;
+        }
+        function convStartSet() {
+          convSetIdx = (convSetIdx + 1) % CONV_SETS.length;
+          convLineIdx = 0;
+          convK.active = true; convK.enter = true; convK.started = false;
+          convK.side = Math.random() < 0.5 ? -1 : 1;
+          convK.bob = Math.random()*6.28;
+          convShowLine();
+        }
+        function updateConvKataan(dt) {
+          if (currentPhase !== 'final') { // Finalのみ
+            if (convK.active) { convK.active = false; convK.alpha = 0; }
+            convState = 'wait'; convTimer = 12; convBubble = null; return;
+          }
+          const W = canvas.clientWidth || 320, H = canvas.clientHeight || 600;
+          // 位置：プレイヤーの横・画面端寄り、上下にゆっくり揺れる
+          convK.bob += dt * 1.6;
+          convK.tx = (convK.side < 0) ? W*0.20 : W*0.80;
+          convK.ty = H*0.30 + Math.sin(convK.bob)*8;
+          if (convK.active && !convK.started) { // 画面端からホバーで寄ってくる初期位置
+            convK.x = (convK.side < 0) ? -W*0.25 : W*1.25; convK.y = convK.ty; convK.started = true;
+          }
+          if (convState === 'fadeout') {
+            convK.alpha = Math.max(0, convK.alpha - dt/1.6);
+            convK.x += (convK.tx - convK.x) * Math.min(1, dt*1.5);
+            convK.y = convK.ty;
+            if (convK.alpha <= 0) { convK.active = false; convState = 'wait'; convTimer = convQuietNext; }
+            return;
+          }
+          if (convK.active) {
+            convK.x += (convK.tx - convK.x) * Math.min(1, dt*2.2);
+            convK.y = convK.ty;
+            convK.alpha = Math.min(0.85, convK.alpha + dt/1.2); // 透明感（最大0.85）
+          }
+          if (convBubble) convLineT += dt;
+          // 状態機械
+          if (convState === 'wait') {
+            convTimer -= dt;
+            if (convTimer <= 0) convStartSet();
+          } else if (convState === 'line') {
+            convTimer -= dt; convLineT += dt;
+            if (convTimer <= 0) {
+              convLineIdx++;
+              const set = CONV_SETS[convSetIdx];
+              if (convLineIdx >= set.length) {
+                convBubble = null; convState = 'fadeout';
+                convQuietNext = 30 + Math.random()*30; // セット間の静かな時間30〜60秒
+              } else {
+                convState = 'gap'; convTimer = 2 + Math.random()*1.0; convBubble = null; // 返事まで2〜3秒
+              }
+            }
+          } else if (convState === 'gap') {
+            convTimer -= dt;
+            if (convTimer <= 0) convShowLine();
+          }
+        }
+        function drawConvKataan(ctx, W, H) {
+          if (!convK.active || convK.alpha <= 0.01) return;
+          const ready = !!(CONV_K_IMG && CONV_K_IMG.complete && (CONV_K_IMG.naturalWidth||0) > 0);
+          const dw = W * 0.20, dh = dw * ((CONV_K_IMG.naturalHeight||1)/(CONV_K_IMG.naturalWidth||1));
+          const cx = convK.x, cy = convK.y;
+          ctx.save();
+          ctx.globalAlpha = convK.alpha; // 少し透明
+          if (ready) ctx.drawImage(CONV_K_IMG, Math.round(cx - dw/2), Math.round(cy - dh/2), Math.round(dw), Math.round(dh));
+          ctx.restore();
+          // 会話カターンの吹き出し（自前・本体の上）
+          if (convBubble) {
+            const fade = Math.max(0, Math.min(1, (convLineT < 0.3 ? convLineT/0.3 : (convLineT > convLineDur-0.4 ? (convLineDur-convLineT)/0.4 : 1))));
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, fade);
+            ctx.font = 'bold 16px system-ui, -apple-system, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            const tw = ctx.measureText(convBubble).width;
+            const padX = 11, bw = tw + padX*2, bh = 30;
+            let bx = cx - bw/2; bx = Math.max(6, Math.min(W - bw - 6, bx));
+            const by = Math.max(6, cy - dh*0.5 - bh - 2);
+            ctx.fillStyle = 'rgba(20,24,40,0.62)';
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill(); } else ctx.fillRect(bx, by, bw, bh);
+            ctx.fillStyle = '#cfe8ff';
+            ctx.fillText(convBubble, bx + bw/2, by + bh/2 + 1);
+            ctx.restore();
+          }
         }
 
         // キャラスプライト（任意）：assets/normal.png（通常）、assets/sleep.png（ゲームオーバー／赤バー上）
@@ -2273,6 +2437,7 @@
           emoResetBG();
           floatWordsReset();
           endingReset();
+          convReset();
           kataanReset();
           oyasumiReset();
           platFinalT0 = null;
@@ -2563,6 +2728,7 @@
               emoResetBG();
               floatWordsReset();
               endingReset();
+              convReset();
               kataanReset();
               oyasumiReset();
               platFinalT0 = null;
@@ -2893,10 +3059,11 @@
           updatePhase();
           // 背景は「感情の風景」として独立制御（BGM完全同期はやめた）
           updateEmoBG(dt);
-          // 背景に浮かぶ文字（フェーズ別）
+          // 背景に浮かぶ文字（フェーズ別。finalは歌詞の断片を浮遊表示）
           updateFloatWords(dt);
-          // final：エンディング会話（受け皿。空なら何もしない）
-          updateEndingDialogue(dt);
+          // final中央会話は廃止（別案のため）。受け皿(ENDING_DIALOGUES)は将来用に残置
+          // final：会話カターンのゆったり雑談
+          updateConvKataan(dt);
           // 情報カターン（もうひとりの主人公）の飛行
           updateKataan(dt);
           // おやすみカターン（休憩の避難所）
@@ -4123,8 +4290,8 @@
           // 情報カターン（もうひとりの主人公）を描画
           drawKataan(ctx, W, H);
 
-          // final：二人のエンディング会話（字幕風・中央下）
-          drawEndingDialogue(ctx, W, H);
+          // final：会話カターン（隣で雑談）
+          drawConvKataan(ctx, W, H);
 
           // 残機表示（画面上部・右端に小さく）：アイコン× N
           {
