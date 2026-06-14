@@ -1740,6 +1740,87 @@
         let oyasumiSched = 14;     // フェーズ3突入から出現までの猶予秒
         let oyasumiSayT = 0;       // 滞在中セリフのタイマー
         let oyasumiDone = false;   // 1ゲームに1回だけ（Final前の休憩ポイント）
+        let platFinalT0 = null;    // final突入時刻（通常バーの見た目を緑→白へ切替）
+
+        // === 通常バーのフェーズ別テーマ ===
+        function platformTheme() {
+          if (currentPhase === 'phase2') return 'moon';
+          if (currentPhase === 'phase3') return 'crystal';
+          if (currentPhase === 'final') {
+            if (platFinalT0 == null) platFinalT0 = state.time;
+            return ((state.time - platFinalT0) < 80) ? 'green' : 'white'; // 前半=緑と花 / 後半=白い光
+          }
+          return 'cloud'; // phase1 ほか
+        }
+        function drawPhasePlatform(ctx, p) {
+          const x = p.x, y = p.y, w = p.w, h = p.h, t = state.time;
+          const rad = Math.min(8, h/2);
+          const path = (xx,yy,ww,hh,r) => {
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(xx,yy,ww,hh,r); }
+            else { ctx.beginPath(); ctx.rect(xx,yy,ww,hh); }
+          };
+          ctx.save();
+          switch (platformTheme()) {
+            case 'moon': { // 🌙 月光の足場
+              const g = ctx.createLinearGradient(x,y,x,y+h);
+              g.addColorStop(0,'#3a4790'); g.addColorStop(1,'#1d2452');
+              path(x,y,w,h,rad); ctx.fillStyle=g; ctx.fill();
+              ctx.lineWidth=1.5; ctx.strokeStyle='rgba(185,210,255,0.85)';
+              path(x+0.75,y+0.75,w-1.5,h-1.5,rad); ctx.stroke();
+              ctx.fillStyle='rgba(205,225,255,0.55)'; ctx.fillRect(x+4,y+1.5,Math.max(2,w-8),1.5);
+              break;
+            }
+            case 'crystal': { // 💧 水晶・クラゲの足場
+              const g = ctx.createLinearGradient(x,y,x,y+h);
+              g.addColorStop(0,'rgba(120,230,255,0.95)'); g.addColorStop(1,'rgba(150,120,255,0.92)');
+              const pulse = 0.5 + 0.5*Math.sin(t*3 + p.id);
+              ctx.save(); ctx.globalCompositeOperation='lighter';
+              ctx.fillStyle=`rgba(255,150,230,${0.16+0.12*pulse})`;
+              ctx.beginPath(); ctx.ellipse(x+w/2,y+h, w*0.42, h*1.1, 0,0,Math.PI*2); ctx.fill();
+              ctx.restore();
+              path(x,y,w,h,rad); ctx.fillStyle=g; ctx.fill();
+              ctx.lineWidth=1; ctx.strokeStyle='rgba(225,250,255,0.85)';
+              path(x+0.5,y+0.5,w-1,h-1,rad); ctx.stroke();
+              ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.fillRect(x+4,y+2,Math.max(4,w*0.4),2);
+              break;
+            }
+            case 'green': { // 🌿 緑と花の足場
+              const g = ctx.createLinearGradient(x,y,x,y+h);
+              g.addColorStop(0,'#7fe089'); g.addColorStop(1,'#34a85f');
+              path(x,y,w,h,rad); ctx.fillStyle=g; ctx.fill();
+              ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.fillRect(x+4,y+1.5,Math.max(2,w-8),1.5);
+              const cols=['#ffd1e8','#fff3b0','#d8b8ff'];
+              const n=Math.max(2, Math.floor(w/46));
+              for(let i=0;i<n;i++){ const fx=x+10+i*(w-20)/Math.max(1,n-1);
+                ctx.fillStyle=cols[(i+p.id)%cols.length]; ctx.beginPath(); ctx.arc(fx,y+2.5,2,0,Math.PI*2); ctx.fill(); }
+              break;
+            }
+            case 'white': { // ✨ 白い光の足場
+              const g = ctx.createLinearGradient(x,y,x,y+h);
+              g.addColorStop(0,'#ffffff'); g.addColorStop(1,'#cfe0ff');
+              const pulse = 0.5 + 0.5*Math.sin(t*4 + p.id);
+              ctx.save(); ctx.globalCompositeOperation='lighter';
+              ctx.fillStyle=`rgba(255,255,255,${0.16+0.16*pulse})`;
+              path(x-2,y-2,w+4,h+4,rad+2); ctx.fill();
+              ctx.restore();
+              path(x,y,w,h,rad); ctx.fillStyle=g; ctx.fill();
+              ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.fillRect(x+4,y+1.5,Math.max(2,w-8),1.5);
+              break;
+            }
+            default: { // ☁️ 雲の足場（phase1）
+              const g = ctx.createLinearGradient(x,y,x,y+h);
+              g.addColorStop(0,'#ffffff'); g.addColorStop(1,'#dbe6ff');
+              path(x,y,w,h,rad); ctx.fillStyle=g; ctx.fill();
+              ctx.fillStyle='rgba(255,255,255,0.92)';
+              const bumps=Math.max(2, Math.floor(w/40));
+              for(let i=0;i<bumps;i++){ const bx=x+(i+0.5)*(w/bumps);
+                ctx.beginPath(); ctx.arc(bx, y+1.5, h*0.5, 0, Math.PI*2); ctx.fill(); }
+              ctx.fillStyle='rgba(150,180,220,0.35)'; ctx.fillRect(x+3,y+h-2,Math.max(2,w-6),2);
+              break;
+            }
+          }
+          ctx.restore();
+        }
         const OYASUMI_STAY = 120;  // 約2分の長めの休憩
         function oyasumiReset() {
           if (oyasumiRef) { try { platforms = platforms.filter(x => x.id !== oyasumiRef.id); } catch(_){} }
@@ -2027,6 +2108,7 @@
           emoResetBG();
           kataanReset();
           oyasumiReset();
+          platFinalT0 = null;
           state.scoredPids = new Set();
           initBG();
           // 縦画面（スマホ）向けに軽くスケーリング
@@ -2303,6 +2385,7 @@
               emoResetBG();
               kataanReset();
               oyasumiReset();
+              platFinalT0 = null;
 
               player.x = data.player.x; player.y = data.player.y; player.vx = data.player.vx; player.vy = data.player.vy;
               player.onGround = !!data.player.onGround; player.groundId = data.player.groundId; player.airJumpsLeft = data.player.airJumpsLeft||0;
@@ -3540,19 +3623,8 @@
               const visible = (Math.floor((phase) / 0.1) % 2) === 0; // 0.1秒ごとに交互
               if (!visible) continue; // 非表示フレーム
             }
-            const c1 = world.platformColor1;
-            const c2 = world.platformColor2;
-            const g = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-            g.addColorStop(0, c1);
-            g.addColorStop(1, c2);
-            ctx.save();
-            // 旧フェードロジックは使用しない
-            ctx.fillStyle = g;
-            ctx.fillRect(p.x, p.y, p.w, p.h);
-            // small glow
-            ctx.fillStyle = 'rgba(90,190,255,0.25)';
-            ctx.fillRect(p.x, p.y + p.h - 2, p.w, 2);
-            ctx.restore();
+            // 通常足場はフェーズごとに見た目を変える（赤バーは別処理で不変）
+            drawPhasePlatform(ctx, p);
           }
 
           // おやすみカターン（休憩の避難所）をプレイヤーの背面に描画
