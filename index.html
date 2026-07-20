@@ -4,14 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <!-- PWA: manifest + iOS/Android meta for standalone fullscreen from home screen -->
-    <link rel="manifest" href="manifest.json" />
+    <link rel="manifest" href="./manifest.json" />
     <meta name="theme-color" content="#000000" />
+    <meta name="application-name" content="グルコースマンの落ちゲー" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="グルコースマンの落ちゲー" />
-    <link rel="apple-touch-icon" href="assets/IMG_7890.PNG" sizes="180x180" />
-    <link rel="icon" href="favicon.ico" />
+    <meta name="msapplication-TileColor" content="#000000" />
+    <meta name="msapplication-TileImage" content="./icons/icon-512x512.png" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon-180x180.png" sizes="180x180" />
+    <link rel="icon" type="image/png" href="./icons/favicon-32x32.png" sizes="32x32" />
+    <link rel="shortcut icon" href="./favicon.ico" />
     <title>グルコースマンの落ちゲー</title>
     <style>
       :root {
@@ -136,6 +140,12 @@
     </div>
 
     <script>
+      if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("./service-worker.js").catch(() => {});
+        });
+      }
+
       (() => {
         // iOSピンチ・ズーム/ジェスチャメニュー抑止
         window.addEventListener('gesturestart', (e) => e.preventDefault());
